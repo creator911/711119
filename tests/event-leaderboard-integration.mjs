@@ -43,7 +43,7 @@ for (let index = 0; index < 4; index += 1) {
   const post = await json(await fetch(`${baseUrl}/api/posts`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Cookie: memberCookie },
-    body: JSON.stringify({ category: "community", title: `랭킹 테스트 글 ${unique}-${index}`, body: `이벤트 글쓰기왕 집계 테스트 ${unique}-${index}` }),
+    body: JSON.stringify({ category: "community", communityTags: ["일상"], title: `랭킹 테스트 글 ${unique}-${index}`, body: `이벤트 글쓰기왕 집계 테스트 ${unique}-${index}` }),
   }));
   assert.equal(post.response.status, 201, JSON.stringify(post.body));
   const comment = await json(await fetch(`${baseUrl}/api/posts/${post.body.post.id}/comments`, {

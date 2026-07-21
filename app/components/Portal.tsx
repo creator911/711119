@@ -11,6 +11,7 @@ import { comparePopularPosts, isInPopularWindow, postCreatedTime } from "../lib/
 import { renderRichBody } from "../lib/rich-text";
 import { horizontalScrollAvailability, horizontalScrollTarget } from "../lib/horizontal-scroll";
 import { vendorCategories, vendorRegionGroups as regionGroups, writableVendorCategories } from "../lib/vendor-regions";
+import { COMMUNITY_TAGS, isCommunityBoardCategory, type CommunityTag } from "../lib/community-tags";
 
 type View = "home" | "notices" | "vendors" | "community" | "reviews" | "events" | "partner" | "support" | "mypage" | "shop";
 type BoardKind = "notices" | "reviews" | "events" | "gifs" | "community";
@@ -35,6 +36,7 @@ type LivePost = {
   canEdit?: boolean;
   canDelete?: boolean;
   canPin?: boolean;
+  communityTags: CommunityTag[];
   createdAt: string;
 };
 type BoardDisplayPost = {
@@ -56,6 +58,7 @@ type BoardDisplayPost = {
   canEdit?: boolean;
   canDelete?: boolean;
   canPin?: boolean;
+  communityTags: CommunityTag[];
   live: boolean;
 };
 type PostComment = { id: number; body: string; author: string; authorLevel: number; createdAt: string };
@@ -185,7 +188,7 @@ export default function Portal() {
         const sharedPost = result.posts?.find((item) => item.id === postId);
         if (!response.ok || !sharedPost) throw new Error(result.error ?? "게시글을 불러오지 못했습니다.");
         setSelectedPost({
-          id: sharedPost.id, title: sharedPost.title, body: sharedPost.body, author: sharedPost.author,
+          id: sharedPost.id, title: sharedPost.title, body: sharedPost.body, communityTags: sharedPost.communityTags, author: sharedPost.author,
           authorLevel: sharedPost.authorLevel, time: formatPostTime(sharedPost.createdAt), views: sharedPost.views,
           likes: sharedPost.likes, dislikes: sharedPost.dislikes ?? 0, reportCount: sharedPost.reportCount ?? 0, isNotice: Boolean(sharedPost.isNotice), isPinned: Boolean(sharedPost.isPinned),
           commentCount: sharedPost.commentCount, isOwn: sharedPost.isOwn, canEdit: sharedPost.canEdit, canDelete: sharedPost.canDelete, createdAt: sharedPost.createdAt, live: true,
@@ -355,7 +358,7 @@ export default function Portal() {
     setView(board);
     setWriteKind(null);
     setSelectedPost({
-      id: post.id, title: post.title, body: post.body, author: post.author, authorLevel: post.authorLevel,
+      id: post.id, title: post.title, body: post.body, communityTags: post.communityTags, author: post.author, authorLevel: post.authorLevel,
       time: formatPostTime(post.createdAt), views: post.views, likes: post.likes, dislikes: post.dislikes ?? 0,
       reportCount: post.reportCount ?? 0, isNotice: Boolean(post.isNotice), isPinned: Boolean(post.isPinned), commentCount: post.commentCount ?? 0,
       isOwn: true, canEdit: true, canDelete: true, createdAt: post.createdAt, live: true,
@@ -419,12 +422,17 @@ export default function Portal() {
     event.preventDefault();
     if (!writeKind || postSubmitting) return;
     const form = new FormData(event.currentTarget);
+    const communityTags = form.getAll("communityTags").filter((value): value is string => typeof value === "string");
+    if (isCommunityBoardCategory(writeKind) && communityTags.length === 0) {
+      showToast("머릿글을 하나 이상 선택해 주세요.");
+      return;
+    }
     setPostSubmitting(true);
     try {
       const response = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category: writeKind, title: form.get("title"), body: form.get("body"), isPinned: form.get("isPinned") === "on" }),
+        body: JSON.stringify({ category: writeKind, title: form.get("title"), body: form.get("body"), isPinned: form.get("isPinned") === "on", ...(isCommunityBoardCategory(writeKind) ? { communityTags } : {}) }),
       });
       const result = await response.json() as { post?: LivePost; error?: string };
       if (!response.ok || !result.post) throw new Error(result.error ?? "게시글을 저장하지 못했습니다.");
@@ -435,7 +443,7 @@ export default function Portal() {
       }));
       setWriteKind(null);
       setSelectedPost({
-        id: createdPost.id, title: createdPost.title, body: createdPost.body, author: createdPost.author,
+        id: createdPost.id, title: createdPost.title, body: createdPost.body, communityTags: createdPost.communityTags, author: createdPost.author,
         authorLevel: createdPost.authorLevel, time: formatPostTime(createdPost.createdAt), views: createdPost.views,
         likes: createdPost.likes, dislikes: createdPost.dislikes, reportCount: createdPost.reportCount, isNotice: Boolean(createdPost.isNotice), isPinned: Boolean(createdPost.isPinned),
         commentCount: createdPost.commentCount, isOwn: true, canEdit: true, canDelete: true, createdAt: createdPost.createdAt, live: true,
@@ -594,8 +602,8 @@ export default function Portal() {
             <VendorSection posts={featuredVendors} loading={featuredLoading} onOpen={openFeaturedVendor} onMore={() => go("vendors")} />
 
             <section className="board-grid page-width">
-              <BoardPreview title="실시간 후기" posts={boardPosts("reviews").slice(0, 5)} onMore={() => go("reviews")} />
-              <BoardPreview title="커뮤니티" posts={boardPosts("community").slice(0, 5)} onMore={() => go("community")} />
+              <BoardPreview kind="reviews" title="실시간 후기" posts={boardPosts("reviews").slice(0, 5)} onMore={() => go("reviews")} />
+              <BoardPreview kind="community" title="커뮤니티" posts={boardPosts("community").slice(0, 5)} onMore={() => go("community")} />
             </section>
 
             <section className="editorial page-width">
@@ -679,7 +687,7 @@ export default function Portal() {
               setSelectedPost(post);
               if (typeof post.id === "number") setLivePosts((current) => ({
                 ...current,
-                events: (current.events ?? []).map((item) => item.id === post.id ? { ...item, title: post.title, body: post.body, views: post.views, likes: post.likes, dislikes: post.dislikes, reportCount: post.reportCount, isNotice: post.isNotice, isPinned: post.isPinned, commentCount: post.commentCount, isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete } : item),
+                events: (current.events ?? []).map((item) => item.id === post.id ? { ...item, title: post.title, body: post.body, communityTags: post.communityTags, views: post.views, likes: post.likes, dislikes: post.dislikes, reportCount: post.reportCount, isNotice: post.isNotice, isPinned: post.isPinned, commentCount: post.commentCount, isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete } : item),
               }));
             }}
             onPostRemoved={(postId) => {
@@ -711,7 +719,7 @@ export default function Portal() {
               setSelectedPost(post);
               if (typeof post.id === "number") setLivePosts((current) => ({
                 ...current,
-                [view as BoardKind]: (current[view as BoardKind] ?? []).map((item) => item.id === post.id ? { ...item, title: post.title, body: post.body, views: post.views, likes: post.likes, dislikes: post.dislikes, reportCount: post.reportCount, isNotice: post.isNotice, isPinned: post.isPinned, commentCount: post.commentCount, isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete } : item),
+                [view as BoardKind]: (current[view as BoardKind] ?? []).map((item) => item.id === post.id ? { ...item, title: post.title, body: post.body, communityTags: post.communityTags, views: post.views, likes: post.likes, dislikes: post.dislikes, reportCount: post.reportCount, isNotice: post.isNotice, isPinned: post.isPinned, commentCount: post.commentCount, isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete } : item),
               }));
             }}
             onPostRemoved={(postId) => {
@@ -775,7 +783,7 @@ function MyPage({ data, loading, loggedIn, onOpenPost, onOpenShop }: {
             {loading ? <p className="mypage-empty-line">작성글을 불러오는 중입니다.</p> : posts.length ? visiblePosts.map((post) => (
               <button type="button" key={post.id} onClick={() => onOpenPost(post)}>
                 <span>{boardLabels[post.category]}</span>
-                <b>{post.title}{post.commentCount > 0 && <em>[{post.commentCount}]</em>}</b>
+                <b><CommunityPostTitle category={post.category} title={post.title} tags={post.communityTags} />{post.commentCount > 0 && <em>[{post.commentCount}]</em>}</b>
                 <small>추천 {post.likes.toLocaleString()} · 댓글 {post.commentCount.toLocaleString()} · 조회 {post.views.toLocaleString()} · {formatPostTime(post.createdAt)}</small>
               </button>
             )) : <p className="mypage-empty-line">아직 작성한 글이 없습니다.</p>}
@@ -1122,8 +1130,14 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
   </section>;
 }
 
-function BoardPreview({ title, posts, onMore }: { title: string; posts: ReturnType<typeof boardPosts>; onMore: () => void }) {
-  return <section className="board-card"><div className="section-heading compact"><h2>{title}</h2><button onClick={onMore}>더보기 <span>›</span></button></div><div className="preview-posts">{posts.map((post, index) => <button key={post.id} onClick={onMore}><span className={`post-mark ${index === 0 ? "hot" : ""}`}>{index === 0 ? "HOT" : String(index + 1).padStart(2, "0")}</span><b>{post.title}</b><small>{post.time}</small></button>)}</div></section>;
+function CommunityPostTitle({ category, title, tags }: { category: string; title: string; tags?: readonly CommunityTag[] }) {
+  if (!isCommunityBoardCategory(category)) return <>{title}</>;
+  const visibleTags = tags?.length ? tags : (["일상"] as const);
+  return <><span className="community-title-tags" aria-label={`머릿글 ${visibleTags.join(", ")}`}>{visibleTags.map((tag) => `[${tag}]`).join(" ")}</span>{title}</>;
+}
+
+function BoardPreview({ kind, title, posts, onMore }: { kind: BoardKind; title: string; posts: ReturnType<typeof boardPosts>; onMore: () => void }) {
+  return <section className="board-card"><div className="section-heading compact"><h2>{title}</h2><button onClick={onMore}>더보기 <span>›</span></button></div><div className="preview-posts">{posts.map((post, index) => <button key={post.id} onClick={onMore}><span className={`post-mark ${index === 0 ? "hot" : ""}`}>{index === 0 ? "HOT" : String(index + 1).padStart(2, "0")}</span><b><CommunityPostTitle category={kind} title={post.title} tags={post.communityTags} /></b><small>{post.time}</small></button>)}</div></section>;
 }
 
 function formatPostTime(createdAt: string) {
@@ -1288,7 +1302,7 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
     setFilter(nextFilter);
   };
   const toDisplayPost = (post: LivePost): BoardDisplayPost => ({
-    id: post.id, title: post.title, body: post.body, author: post.author, authorLevel: post.authorLevel,
+    id: post.id, title: post.title, body: post.body, communityTags: post.communityTags, author: post.author, authorLevel: post.authorLevel,
     time: formatPostTime(post.createdAt), views: post.views, likes: post.likes, dislikes: post.dislikes ?? 0,
     reportCount: post.reportCount ?? 0, isNotice: Boolean(post.isNotice), isPinned: Boolean(post.isPinned), commentCount: post.commentCount ?? 0,
     isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete, createdAt: post.createdAt, live: true,
@@ -1304,7 +1318,7 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
     .filter((post) => !post.isNotice && popularNow > 0 && isInPopularWindow(post, popularNow))
     .sort(comparePopularPosts);
   const sourcePosts = filter === "popular" ? popularPosts : allPosts;
-  const searchedPosts = sourcePosts.filter((post) => !searchTerm || `${post.title} ${post.author}`.toLowerCase().includes(searchTerm.toLowerCase()));
+  const searchedPosts = sourcePosts.filter((post) => !searchTerm || `${post.communityTags.join(" ")} ${post.title} ${post.author}`.toLowerCase().includes(searchTerm.toLowerCase()));
   const filteredPosts = searchedPosts.filter((post) => filter !== "notice" || post.isNotice);
   const totalPages = Math.max(1, Math.ceil(filteredPosts.length / BOARD_PAGE_SIZE));
   const activePage = Math.min(currentPage, totalPages);
@@ -1318,6 +1332,7 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
       ...item,
       title: post.title,
       body: post.body,
+      communityTags: post.communityTags,
       views: post.views,
       likes: post.likes,
       dislikes: post.dislikes,
@@ -1367,18 +1382,39 @@ function BoardList({ kind, posts, totalPosts, pageStart, filter, loading, onFilt
     <div className="forum-table" role="table" aria-label={`${boardLabels[kind]} 글 목록`} aria-busy={loading}>
       <div className="forum-row forum-head" role="row"><span>번호</span><b>제목</b><span>글쓴이</span><span>작성일</span><span>조회</span><span>추천</span><span>비추천</span></div>
       {posts.map((post, index) => <button type="button" className="forum-row" key={post.id} onClick={() => onOpen(post)}>
-        <span>{post.isPinned ? <em className="pinned-mark">고정</em> : post.isNotice ? <em className="notice-mark">공지</em> : post.live ? "NEW" : totalPosts - pageStart - index}</span><b>{post.title}{post.commentCount > 0 && <em>[{post.commentCount}]</em>}<small>{formatPostAuthor(post)} · {post.time}</small></b><span>{formatPostAuthor(post)}</span><span>{post.time}</span><span>{post.views}</span><span>{post.likes}</span><span>{post.dislikes}</span>
+        <span>{post.isPinned ? <em className="pinned-mark">고정</em> : post.isNotice ? <em className="notice-mark">공지</em> : post.live ? "NEW" : totalPosts - pageStart - index}</span><b><CommunityPostTitle category={kind} title={post.title} tags={post.communityTags} />{post.commentCount > 0 && <em>[{post.commentCount}]</em>}<small>{formatPostAuthor(post)} · {post.time}</small></b><span>{formatPostAuthor(post)}</span><span>{post.time}</span><span>{post.views}</span><span>{post.likes}</span><span>{post.dislikes}</span>
       </button>)}
       {loading && posts.length === 0 ? <div className="forum-empty">최근 7일 인기글을 불러오는 중입니다.</div> : posts.length === 0 && <div className="forum-empty">조건에 맞는 게시글이 없습니다.</div>}
     </div>
   </>;
 }
 
+function CommunityTagPicker({ value, onChange }: { value: readonly CommunityTag[]; onChange: (tags: CommunityTag[]) => void }) {
+  const toggle = (tag: CommunityTag) => {
+    const selected = new Set(value);
+    if (selected.has(tag)) selected.delete(tag);
+    else selected.add(tag);
+    onChange(COMMUNITY_TAGS.filter((candidate) => selected.has(candidate)));
+  };
+
+  return <fieldset className="community-tag-picker" aria-required="true">
+    <legend>머릿글 선택 <em>필수 · 1개 이상</em></legend>
+    <div className="community-tag-options">
+      {COMMUNITY_TAGS.map((tag) => <label className="community-tag-option" key={tag}>
+        <input type="checkbox" name="communityTags" value={tag} checked={value.includes(tag)} onChange={() => toggle(tag)} />
+        <span>[{tag}]</span>
+      </label>)}
+    </div>
+  </fieldset>;
+}
+
 function BoardWritePage({ kind, viewer, onCancel, onSubmit, submitting }: { kind: BoardKind; viewer: Viewer | null; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; submitting: boolean }) {
   const [body, setBody] = useState("");
   const [editorBusy, setEditorBusy] = useState(false);
+  const [communityTags, setCommunityTags] = useState<CommunityTag[]>([]);
   return <form className="forum-write" onSubmit={(event) => { if (editorBusy) { event.preventDefault(); return; } onSubmit(event); }}>
     <div className="forum-write-title"><strong>{boardLabels[kind]} 글쓰기</strong><span>건강한 게시판 문화를 함께 만들어 주세요.</span></div>
+    {isCommunityBoardCategory(kind) && <CommunityTagPicker value={communityTags} onChange={setCommunityTags} />}
     <input className="forum-title-input" name="title" required minLength={2} maxLength={80} autoFocus placeholder="제목을 입력해 주세요." />
     {viewer?.level === 10 && (kind === "community" || kind === "reviews") && <label className="forum-pin-option"><input type="checkbox" name="isPinned" /> <span><b>상단 고정</b><small>체크하면 게시판 최상단에 고정됩니다.</small></span></label>}
     <RichTextEditor name="body" value={body} onChange={setBody} onBusyChange={setEditorBusy} placeholder="내용을 입력해 주세요." />
@@ -1400,6 +1436,7 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
   const [editBody, setEditBody] = useState(initialPost.body);
   const [editBusy, setEditBusy] = useState(false);
   const [editPinned, setEditPinned] = useState(Boolean(initialPost.isPinned));
+  const [editCommunityTags, setEditCommunityTags] = useState<CommunityTag[]>(initialPost.communityTags);
 
   useEffect(() => {
     if (!initialPost.live || typeof initialPost.id !== "number") return;
@@ -1413,6 +1450,7 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
       setEditTitle(next.title);
       setEditBody(next.body);
       setEditPinned(Boolean(next.isPinned));
+      setEditCommunityTags(next.communityTags);
       setComments(result.comments ?? []);
       setPoll(result.poll ?? null);
       onPostChange(next);
@@ -1466,12 +1504,16 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
   const submitEdit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!post.canEdit || !post.live || typeof post.id !== "number" || actionSubmitting || editBusy) return;
+    if (isCommunityBoardCategory(kind) && editCommunityTags.length === 0) {
+      showToast("머릿글을 하나 이상 선택해 주세요.");
+      return;
+    }
     setActionSubmitting(true);
     try {
       const response = await fetch(`/api/posts/${post.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: editTitle, body: editBody, isPinned: editPinned }),
+        body: JSON.stringify({ title: editTitle, body: editBody, isPinned: editPinned, ...(isCommunityBoardCategory(kind) ? { communityTags: editCommunityTags } : {}) }),
       });
       const result = await response.json() as { post?: LivePost; error?: string };
       if (!response.ok || !result.post) throw new Error(result.error ?? "게시글을 수정하지 못했습니다.");
@@ -1480,6 +1522,7 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
       setEditTitle(next.title);
       setEditBody(next.body);
       setEditPinned(Boolean(next.isPinned));
+      setEditCommunityTags(next.communityTags);
       setEditing(false);
       onPostChange(next);
       showToast("게시글을 수정했습니다.");
@@ -1510,14 +1553,15 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
   if (editing) return <article className="forum-detail forum-edit-detail">
     <form className="forum-write forum-edit-form" onSubmit={submitEdit}>
       <div className="forum-write-title"><strong>{boardLabels[kind]} 글 수정</strong><span>수정 권한은 작성자와 관리자에게만 있습니다.</span></div>
+      {isCommunityBoardCategory(kind) && <CommunityTagPicker value={editCommunityTags} onChange={setEditCommunityTags} />}
       <input className="forum-title-input" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} required minLength={2} maxLength={80} autoFocus aria-label="게시글 제목" />
       {(post.canPin || viewer?.level === 10) && (kind === "community" || kind === "reviews") && <label className="forum-pin-option"><input type="checkbox" checked={editPinned} onChange={(event) => setEditPinned(event.target.checked)} /> <span><b>상단 고정</b><small>체크하면 게시판 최상단에 고정됩니다.</small></span></label>}
       <RichTextEditor name="body" value={editBody} onChange={setEditBody} onBusyChange={setEditBusy} placeholder="내용을 입력해 주세요." />
-      <div className="forum-write-actions"><button type="button" disabled={editBusy} onClick={() => { setEditTitle(post.title); setEditBody(post.body); setEditPinned(Boolean(post.isPinned)); setEditing(false); }}>취소</button><button type="submit" disabled={actionSubmitting || editBusy}>{editBusy ? "첨부 중…" : actionSubmitting ? "수정 중…" : "수정 완료"}</button></div>
+      <div className="forum-write-actions"><button type="button" disabled={editBusy} onClick={() => { setEditTitle(post.title); setEditBody(post.body); setEditPinned(Boolean(post.isPinned)); setEditCommunityTags(post.communityTags); setEditing(false); }}>취소</button><button type="submit" disabled={actionSubmitting || editBusy}>{editBusy ? "첨부 중…" : actionSubmitting ? "수정 중…" : "수정 완료"}</button></div>
     </form>
   </article>;
   return <article className="forum-detail">
-    <header><h2>{post.title}</h2><div><span>{formatPostAuthor(post)}</span><span>{post.createdAt ? new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(post.createdAt)) : post.time}</span><span>조회 {post.views}</span><span>추천 {post.likes}</span><span>비추천 {post.dislikes}</span><span>신고 {post.reportCount}</span><span>댓글 {post.commentCount}</span></div></header>
+    <header><h2><CommunityPostTitle category={kind} title={post.title} tags={post.communityTags} /></h2><div><span>{formatPostAuthor(post)}</span><span>{post.createdAt ? new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(post.createdAt)) : post.time}</span><span>조회 {post.views}</span><span>추천 {post.likes}</span><span>비추천 {post.dislikes}</span><span>신고 {post.reportCount}</span><span>댓글 {post.commentCount}</span></div></header>
     <PostRichBody body={post.body} poll={poll} viewer={viewer} postId={typeof post.id === "number" ? post.id : null} onLoginRequired={onLoginRequired} showToast={showToast} />
     <div className="forum-detail-actions">
       <div className="forum-vote-actions"><button type="button" disabled={actionSubmitting || post.isOwn || post.author === viewer?.nickname} onClick={() => void vote("up")} title={post.isOwn || post.author === viewer?.nickname ? "본인 글에는 투표할 수 없습니다." : undefined}><strong>추천</strong><span>{post.likes}</span></button><button type="button" disabled={actionSubmitting || post.isOwn || post.author === viewer?.nickname} onClick={() => void vote("down")} title={post.isOwn || post.author === viewer?.nickname ? "본인 글에는 투표할 수 없습니다." : undefined}><strong>비추천</strong><span>{post.dislikes}</span></button></div>

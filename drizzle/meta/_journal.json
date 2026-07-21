@@ -176,6 +176,20 @@
       "when": 1784580916765,
       "tag": "0024_lonely_robbie_robertson",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1784630041408,
+      "tag": "0025_black_vampiro",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1784631895814,
+      "tag": "0026_mighty_gravity",
+      "breakpoints": true
     }
   ]
 }

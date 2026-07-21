@@ -79,13 +79,14 @@ test("all Drizzle migrations apply once and preserve trigger statements", () => 
   try {
     assert.deepEqual(splitMigrationStatements("SELECT 1;--> statement-breakpoint\r\nSELECT 2;"), ["SELECT 1;", "SELECT 2;"]);
     const first = applyMigrations(fixture.database);
-    assert.equal(first.applied.length, 25);
+    assert.equal(first.applied.length, 27);
     assert.deepEqual(applyMigrations(fixture.database), { applied: [] });
 
-    assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM _node_migrations")[0].count, 25);
+    assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM _node_migrations")[0].count, 27);
     assert.deepEqual(fixture.database._allSync("SELECT username FROM admin_owners ORDER BY username"), []);
     assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM featured_vendor_posts")[0].count, 4);
     assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM shop_products")[0].count, 10);
+    assert.equal(fixture.database._allSync("SELECT value FROM site_settings WHERE key='main_domain'")[0].value, "https://nara001.co.kr");
     assert.equal(
       fixture.database._allSync("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='trigger' AND name='shop_purchase_apply_after_insert'")[0].count,
       1,

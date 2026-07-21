@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { memberFromSession } from "../../lib/member-auth";
+import { communityTagsFromMask } from "../../lib/community-tags";
 
 export async function GET(request: Request) {
   const user = await memberFromSession(request);
@@ -7,7 +8,7 @@ export async function GET(request: Request) {
 
   try {
     const posts = await env.DB.prepare(`
-      SELECT p.id,p.category,p.title,p.body,p.views,p.likes,p.dislikes,p.report_count AS reportCount,p.is_notice AS isNotice,p.is_pinned AS isPinned,p.created_at AS createdAt,
+      SELECT p.id,p.category,p.title,p.body,p.views,p.likes,p.dislikes,p.report_count AS reportCount,p.is_notice AS isNotice,p.is_pinned AS isPinned,p.community_tag_mask AS communityTagMask,p.created_at AS createdAt,
              COALESCE(u.nickname,'탈퇴회원') AS author,
              COALESCE(u.level,0) AS authorLevel,
              (SELECT COUNT(*) FROM post_comments c WHERE c.post_id=p.id AND c.status='published') AS commentCount
@@ -25,7 +26,11 @@ export async function GET(request: Request) {
 
     return Response.json({
       user: { username: user.username, nickname: user.nickname, points: user.points, level: user.level },
-      posts: posts.results,
+      posts: posts.results.map((row) => {
+        const post = row as Record<string, unknown>;
+        const { communityTagMask, ...safePost } = post;
+        return { ...safePost, communityTags: communityTagsFromMask(communityTagMask, post.category) };
+      }),
       pointHistory: pointHistory.results,
     });
   } catch (error) {

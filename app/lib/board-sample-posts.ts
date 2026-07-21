@@ -1,3 +1,5 @@
+import { COMMUNITY_TAGS, type CommunityTag } from "./community-tags.ts";
+
 export type SampleBoardKind = "notices" | "reviews" | "events" | "community";
 
 export type SampleBoardPost = {
@@ -13,6 +15,7 @@ export type SampleBoardPost = {
   isNotice: boolean;
   isPinned: boolean;
   commentCount: number;
+  communityTags: CommunityTag[];
   createdAt: string;
 };
 
@@ -177,6 +180,7 @@ export function getSampleBoardPosts(kind: SampleBoardKind, now: Date = SAMPLE_PU
     isNotice: kind === "notices",
     isPinned: false,
     commentCount: 0,
+    communityTags: kind === "community" ? [COMMUNITY_TAGS[index % COMMUNITY_TAGS.length]] : [],
     createdAt: new Date(nowMs - ageHours * HOUR_MS).toISOString(),
   }));
 }

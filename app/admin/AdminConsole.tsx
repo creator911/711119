@@ -28,7 +28,7 @@ type DirectorRegion = { userId: number; region: string; district: string };
 type DirectorMember = Pick<Member, "id" | "username" | "nickname" | "level" | "status">;
 type AffiliateMember = Pick<Member, "id" | "username" | "nickname" | "level" | "points" | "status" | "isDirector" | "isPartner" | "createdAt">;
 type FeaturedVendorPermission = { userId: number; slot: number };
-type AdminTab = "posts" | "events" | "notices" | "shop" | "members" | "security" | "support" | "partner" | "directors" | "affiliates";
+type AdminTab = "posts" | "events" | "notices" | "shop" | "members" | "security" | "support" | "partner" | "directors" | "affiliates" | "domain";
 type Operator = { username: string; role: "owner" | "level10"; level: 10; canManageAdmins: boolean };
 type Overview = {
   operator: Operator;
@@ -40,7 +40,8 @@ type Overview = {
 
 const emptyOverview: Overview = { operator: { username: "", role: "owner", level: 10, canManageAdmins: false }, stats: { totalMembers: 0, activeMembers: 0, todayMembers: 0, todayPosts: 0, todayAttendance: 0, supportUnread: 0, partnerUnread: 0, shopLowStockProducts: 0 }, members: [], posts: [], blockedIps: [] };
 const formatDate = (value: string) => value ? new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)) : "—";
-const adminTitles: Record<AdminTab, string> = { posts: "최신글 리스트", events: "이벤트 관리", notices: "공지 관리", shop: "상점 수정", members: "회원정보 관리", security: "보안·IP 관리", support: "고객센터 상담", partner: "제휴문의 상담", directors: "실장", affiliates: "제휴회원" };
+const DEFAULT_MAIN_DOMAIN = "https://nara001.co.kr";
+const adminTitles: Record<AdminTab, string> = { posts: "최신글 리스트", events: "이벤트 관리", notices: "공지 관리", shop: "상점 수정", members: "회원정보 관리", security: "보안·IP 관리", support: "고객센터 상담", partner: "제휴문의 상담", directors: "실장", affiliates: "제휴회원", domain: "메인페이지 도메인" };
 
 export default function AdminConsole() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
@@ -66,6 +67,10 @@ export default function AdminConsole() {
   const [affiliatePermissionsLoading, setAffiliatePermissionsLoading] = useState(false);
   const [dirtyAffiliateIds, setDirtyAffiliateIds] = useState<number[]>([]);
   const [savingAffiliateId, setSavingAffiliateId] = useState<number | null>(null);
+  const [mainDomain, setMainDomain] = useState(DEFAULT_MAIN_DOMAIN);
+  const [savedMainDomain, setSavedMainDomain] = useState(DEFAULT_MAIN_DOMAIN);
+  const [domainLoading, setDomainLoading] = useState(false);
+  const [domainSaving, setDomainSaving] = useState(false);
 
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600); };
 
@@ -156,6 +161,32 @@ export default function AdminConsole() {
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [signedIn, tab]);
 
+  useEffect(() => {
+    if (!signedIn || tab !== "domain") return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setDomainLoading(true);
+      void fetch("/api/admin/main-domain", { cache: "no-store" })
+        .then(async (response) => {
+          const result = await response.json() as { url?: string; error?: string };
+          if (!response.ok) throw new Error(result.error ?? "메인페이지 도메인을 불러오지 못했습니다.");
+          if (cancelled) return;
+          const url = result.url ?? DEFAULT_MAIN_DOMAIN;
+          setMainDomain(url);
+          setSavedMainDomain(url);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setToast(error instanceof Error ? error.message : "메인페이지 도메인을 불러오지 못했습니다.");
+          window.setTimeout(() => setToast(""), 2600);
+        })
+        .finally(() => {
+          if (!cancelled) setDomainLoading(false);
+        });
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [signedIn, tab]);
+
   const login = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submitting) return;
@@ -184,7 +215,31 @@ export default function AdminConsole() {
     setAffiliateMembers([]);
     setAffiliateSlots({});
     setDirtyAffiliateIds([]);
+    setMainDomain(DEFAULT_MAIN_DOMAIN);
+    setSavedMainDomain(DEFAULT_MAIN_DOMAIN);
     setSignedIn(false);
+  };
+
+  const saveMainDomain = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (domainSaving) return;
+    setDomainSaving(true);
+    try {
+      const response = await fetch("/api/admin/main-domain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: mainDomain }),
+      });
+      const result = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !result.url) throw new Error(result.error ?? "메인페이지 도메인을 저장하지 못했습니다.");
+      setMainDomain(result.url);
+      setSavedMainDomain(result.url);
+      notify("메인페이지 도메인을 저장했습니다.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "메인페이지 도메인을 저장하지 못했습니다.");
+    } finally {
+      setDomainSaving(false);
+    }
   };
 
   const changeMember = (id: number, changes: Partial<Member>) => {
@@ -353,7 +408,7 @@ export default function AdminConsole() {
   if (!signedIn) return <main className="admin-login"><form onSubmit={login} aria-label="보안 로그인"><input name="username" autoComplete="username" placeholder="아이디" aria-label="아이디" required /><input name="password" type="password" autoComplete="current-password" placeholder="비밀번호" aria-label="비밀번호" required /><button type="submit" disabled={submitting}>{submitting ? "확인 중…" : "보안 로그인"}</button></form>{toast && <div className="admin-toast" role="status">{toast}</div>}</main>;
 
   return <div className="admin-shell">
-    <aside className="admin-side"><div className="admin-brand"><span>CN</span><b>운영 콘솔</b></div><nav><button className={tab === "posts" ? "active" : ""} onClick={() => setTab("posts")}><span>01</span>최신글</button><button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}><span>02</span>이벤트 관리</button><button className={tab === "notices" ? "active" : ""} onClick={() => setTab("notices")}><span>03</span>공지 관리</button><button className={tab === "shop" ? "active" : ""} onClick={() => setTab("shop")}><span>04</span>상점 수정{overview.stats.shopLowStockProducts > 0 && <em title="자동상품 지급 이미지 확인 필요">{overview.stats.shopLowStockProducts > 99 ? "99+" : overview.stats.shopLowStockProducts}</em>}</button><button className={tab === "members" ? "active" : ""} onClick={() => setTab("members")}><span>05</span>회원 관리</button><button className={tab === "security" ? "active" : ""} onClick={() => setTab("security")}><span>06</span>보안·IP</button><button className={tab === "support" ? "active" : ""} onClick={() => setTab("support")}><span>07</span>고객센터{overview.stats.supportUnread > 0 && <em>{overview.stats.supportUnread > 99 ? "99+" : overview.stats.supportUnread}</em>}</button><button className={tab === "partner" ? "active" : ""} onClick={() => setTab("partner")}><span>08</span>제휴문의{overview.stats.partnerUnread > 0 && <em>{overview.stats.partnerUnread > 99 ? "99+" : overview.stats.partnerUnread}</em>}</button><button className={tab === "directors" ? "active" : ""} onClick={() => setTab("directors")}><span>09</span>실장</button><button className={tab === "affiliates" ? "active" : ""} onClick={() => setTab("affiliates")}><span>10</span>제휴회원</button></nav><div className="admin-user"><div>10</div><p><b>{overview.operator.username}</b><small>{overview.operator.role === "owner" ? "OWNER · Lv.10" : "ADMIN · Lv.10"}</small></p></div></aside>
+    <aside className="admin-side"><div className="admin-brand"><span>CN</span><b>운영 콘솔</b></div><nav><button className={tab === "posts" ? "active" : ""} onClick={() => setTab("posts")}><span>01</span>최신글</button><button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}><span>02</span>이벤트 관리</button><button className={tab === "notices" ? "active" : ""} onClick={() => setTab("notices")}><span>03</span>공지 관리</button><button className={tab === "shop" ? "active" : ""} onClick={() => setTab("shop")}><span>04</span>상점 수정{overview.stats.shopLowStockProducts > 0 && <em title="자동상품 지급 이미지 확인 필요">{overview.stats.shopLowStockProducts > 99 ? "99+" : overview.stats.shopLowStockProducts}</em>}</button><button className={tab === "members" ? "active" : ""} onClick={() => setTab("members")}><span>05</span>회원 관리</button><button className={tab === "security" ? "active" : ""} onClick={() => setTab("security")}><span>06</span>보안·IP</button><button className={tab === "support" ? "active" : ""} onClick={() => setTab("support")}><span>07</span>고객센터{overview.stats.supportUnread > 0 && <em>{overview.stats.supportUnread > 99 ? "99+" : overview.stats.supportUnread}</em>}</button><button className={tab === "partner" ? "active" : ""} onClick={() => setTab("partner")}><span>08</span>제휴문의{overview.stats.partnerUnread > 0 && <em>{overview.stats.partnerUnread > 99 ? "99+" : overview.stats.partnerUnread}</em>}</button><button className={tab === "directors" ? "active" : ""} onClick={() => setTab("directors")}><span>09</span>실장</button><button className={tab === "affiliates" ? "active" : ""} onClick={() => setTab("affiliates")}><span>10</span>제휴회원</button><button className={tab === "domain" ? "active" : ""} onClick={() => setTab("domain")}><span>11</span>메인페이지 도메인</button></nav><div className="admin-user"><div>10</div><p><b>{overview.operator.username}</b><small>{overview.operator.role === "owner" ? "OWNER · Lv.10" : "ADMIN · Lv.10"}</small></p></div></aside>
     <main className="admin-main">
       <header><div><p>CONTROL CENTER</p><h1>{adminTitles[tab]}</h1></div><div className="admin-top-actions"><span><i /> 시스템 정상</span><Link href="/">사이트 보기 ↗</Link><button onClick={logout}>로그아웃</button></div></header>
       <section className="admin-stats"><article><span>오늘 가입</span><b>{overview.stats.todayMembers.toLocaleString()}</b><small>오늘 00시 기준</small></article><article><span>활성 회원</span><b>{overview.stats.activeMembers.toLocaleString()}</b><small>전체 {overview.stats.totalMembers.toLocaleString()}명</small></article><article><span>오늘 게시글</span><b>{overview.stats.todayPosts.toLocaleString()}</b><small>실제 등록 데이터</small></article><article><span>오늘 출석</span><b>{overview.stats.todayAttendance.toLocaleString()}</b><small>회원당 50P 자동 적립</small></article></section>
@@ -448,6 +503,15 @@ export default function AdminConsole() {
             </div>;
           }) : <p className="admin-empty">아직 제휴로 지정된 회원이 없습니다.</p>}
         </div>
+      </section>}
+      {tab === "domain" && <section className="admin-panel admin-domain-panel">
+        <div className="panel-title"><div><h2>대문 연결 주소 설정</h2><p>출장나라 대문의 공식 홈페이지 버튼이 이동할 주소를 서버에 저장합니다.</p></div><span className="domain-status"><i /> 공용 설정</span></div>
+        <form className="domain-form" onSubmit={saveMainDomain}>
+          <label htmlFor="main-domain">메인페이지 도메인</label>
+          <div><input id="main-domain" type="url" inputMode="url" value={mainDomain} onChange={(event) => setMainDomain(event.target.value)} placeholder={DEFAULT_MAIN_DOMAIN} disabled={domainLoading || domainSaving} required /><button type="submit" disabled={domainLoading || domainSaving}>{domainSaving ? "저장 중…" : "도메인 저장"}</button></div>
+          <small>https://를 포함한 전체 도메인을 입력해 주세요. 저장값은 서버 DB에 보관되어 모든 기기에 동일하게 적용됩니다.</small>
+        </form>
+        <div className="domain-current"><div><span>CURRENT DOMAIN</span><h3>현재 연결 주소</h3></div>{domainLoading ? <p>불러오는 중…</p> : <a href={savedMainDomain} target="_blank" rel="noreferrer">{savedMainDomain}<b aria-hidden="true">↗</b></a>}<small><i /> 연결 준비 완료</small></div>
       </section>}
     </main>{toast && <div className="admin-toast" role="status">{toast}</div>}
   </div>;

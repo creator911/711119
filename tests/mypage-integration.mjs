@@ -46,7 +46,7 @@ const postTitle = `마이페이지 작성글 ${unique}`;
 const createdPost = await json(await fetch(`${baseUrl}/api/posts`, {
   method: "POST",
   headers: { "Content-Type": "application/json", Cookie: sessionCookie },
-  body: JSON.stringify({ category: "community", title: postTitle, body: "마이페이지 작성글 목록에 표시되어야 합니다." }),
+  body: JSON.stringify({ category: "community", communityTags: ["꿀팁", "이슈"], title: postTitle, body: "마이페이지 작성글 목록에 표시되어야 합니다." }),
 }));
 assert.equal(createdPost.response.status, 201);
 
@@ -71,6 +71,7 @@ assert.equal(mypage.body.user.points, 50);
 const listedPost = mypage.body.posts.find((post) => post.id === createdPost.body.post.id);
 assert.equal(listedPost.title, postTitle);
 assert.equal(listedPost.category, "community");
+assert.deepEqual(listedPost.communityTags, ["꿀팁", "이슈"]);
 assert.equal(listedPost.commentCount, 1);
 assert.ok(mypage.body.pointHistory.some((item) => item.type === "attendance" && item.amount === 50));
 

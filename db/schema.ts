@@ -62,6 +62,7 @@ export const pointLedger = sqliteTable("point_ledger", {
 export const posts = sqliteTable("posts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   category: text("category").notNull(),
+  communityTagMask: integer("community_tag_mask").notNull().default(0),
   title: text("title").notNull(),
   body: text("body").notNull().default(""),
   authorId: integer("author_id").notNull(),
@@ -356,3 +357,10 @@ export const eventRewardPayouts = sqliteTable("event_reward_payouts", {
   points: integer("points").notNull(),
   createdAt: text("created_at").notNull(),
 }, (table) => [uniqueIndex("event_reward_payouts_period_user_unique").on(table.periodType, table.boardType, table.periodStart, table.userId)]);
+
+export const siteSettings = sqliteTable("site_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedBy: text("updated_by").notNull().default("system"),
+  updatedAt: text("updated_at").notNull(),
+});

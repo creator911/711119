@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { memberFromSession } from "../../lib/member-auth";
 import { attachPostPoll, PollValidationError, preparePostBody } from "../../lib/post-polls";
 import { buildPostListQuery } from "../../lib/post-list-query";
+import { communityTagsFromMask, isCommunityBoardCategory, validateCommunityTags, type CommunityTag } from "../../lib/community-tags";
 import { hasRichMedia } from "../../lib/rich-text";
 import {
   finalizeBodyMedia,
@@ -18,6 +19,11 @@ const MEMBER_WRITE_CATEGORIES = ["reviews", "gifs", "community"] as const;
 const validCategory = (value: string): value is typeof BOARD_CATEGORIES[number] =>
   BOARD_CATEGORIES.includes(value as typeof BOARD_CATEGORIES[number]);
 
+const exposeCommunityTags = (row: Record<string, unknown>) => {
+  const { communityTagMask, ...post } = row;
+  return { ...post, communityTags: communityTagsFromMask(communityTagMask, row.category) };
+};
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const category = url.searchParams.get("category") ?? "";
@@ -27,7 +33,7 @@ export async function GET(request: Request) {
     const { sql, bindings } = buildPostListQuery(category, sort);
     const statement = env.DB.prepare(sql);
     const posts = bindings.length ? await statement.bind(...bindings).all() : await statement.all();
-    return Response.json({ posts: posts.results });
+    return Response.json({ posts: posts.results.map((post) => exposeCommunityTags(post as Record<string, unknown>)) });
   } catch (error) {
     console.error("Post list load failed", error);
     return Response.json({ error: "게시글을 불러오지 못했습니다." }, { status: 500 });
@@ -41,7 +47,7 @@ export async function POST(request: Request) {
   let saveCommitted = false;
   let createdPostId = 0;
   try {
-    const payload = await request.json() as { category?: unknown; title?: unknown; body?: unknown; isPinned?: unknown };
+    const payload = await request.json() as { category?: unknown; title?: unknown; body?: unknown; isPinned?: unknown; communityTags?: unknown };
     const category = typeof payload.category === "string" ? payload.category : "";
     const title = typeof payload.title === "string" ? payload.title : "";
     const body = typeof payload.body === "string" ? payload.body : "";
@@ -49,27 +55,37 @@ export async function POST(request: Request) {
     const normalizedTitle = title.trim().replace(/\s+/g, " ");
     const { body: normalizedBody, textLength, poll } = preparePostBody(body);
     const hasMedia = hasRichMedia(normalizedBody);
+    let communityTags: CommunityTag[] = [];
+    let communityTagMask = 0;
     if (!MEMBER_WRITE_CATEGORIES.includes(category as typeof MEMBER_WRITE_CATEGORIES[number])) {
       return Response.json({ error: "이 게시판에는 회원 글을 등록할 수 없습니다." }, { status: 403 });
     }
     if (isPinned && (user.level !== 10 || (category !== "community" && category !== "reviews"))) {
       return Response.json({ error: "커뮤니티·후기 상단 고정은 레벨 10 관리자만 사용할 수 있습니다." }, { status: 403 });
     }
+    if (isCommunityBoardCategory(category)) {
+      const validated = validateCommunityTags(payload.communityTags);
+      if (!validated.ok) return Response.json({ error: validated.error }, { status: 400 });
+      communityTags = validated.tags;
+      communityTagMask = validated.mask;
+    } else if (payload.communityTags !== undefined && (!Array.isArray(payload.communityTags) || payload.communityTags.length > 0)) {
+      return Response.json({ error: "머릿글은 커뮤니티 글에만 사용할 수 있습니다." }, { status: 400 });
+    }
     if (normalizedTitle.length < 2 || normalizedTitle.length > 80) return Response.json({ error: "제목은 2–80자로 입력해 주세요." }, { status: 400 });
     if ((textLength < 2 && !hasMedia && !poll) || textLength > 3000 || normalizedBody.length > 20000) return Response.json({ error: "내용은 2–3,000자로 입력해 주세요." }, { status: 400 });
     mediaClaim = await reserveBodyMedia(env.DB, memberMediaActorKey(user.id), normalizedBody);
     const createdAt = new Date().toISOString();
     const inserted = await env.DB.prepare(`
-      INSERT INTO posts(category,title,body,author_id,views,likes,dislikes,report_count,is_notice,is_pinned,status,created_at)
-      VALUES(?,?,?,?,0,0,0,0,0,?,'published',?)
-    `).bind(category, normalizedTitle, normalizedBody, user.id, isPinned ? 1 : 0, createdAt).run();
+      INSERT INTO posts(category,title,body,author_id,views,likes,dislikes,report_count,is_notice,is_pinned,community_tag_mask,status,created_at)
+      VALUES(?,?,?,?,0,0,0,0,0,?,?,'published',?)
+    `).bind(category, normalizedTitle, normalizedBody, user.id, isPinned ? 1 : 0, communityTagMask, createdAt).run();
     const postId = Number(inserted.meta.last_row_id);
     createdPostId = postId;
     const finalBody = await attachPostPoll(env.DB, postId, normalizedBody, poll, createdAt);
     await finalizeBodyMedia(env.DB, mediaClaim, "post", postId, finalBody, createdAt);
     saveCommitted = true;
     return Response.json({
-      post: { id: postId, category, title: normalizedTitle, body: finalBody, author: user.nickname, authorLevel: user.level, views: 0, likes: 0, dislikes: 0, reportCount: 0, commentCount: 0, isNotice: false, isPinned, isOwn: true, canEdit: true, canDelete: true, createdAt },
+      post: { id: postId, category, title: normalizedTitle, body: finalBody, communityTags, author: user.nickname, authorLevel: user.level, views: 0, likes: 0, dislikes: 0, reportCount: 0, commentCount: 0, isNotice: false, isPinned, isOwn: true, canEdit: true, canDelete: true, createdAt },
     }, { status: 201 });
   } catch (error) {
     if (!saveCommitted && createdPostId) {

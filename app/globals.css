@@ -355,6 +355,17 @@ button { color:inherit; }
 .forum-write-title { min-height:54px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid #ddd; }
 .forum-write-title strong { font-size:18px; }
 .forum-write-title span { color:#888; font-size:11px; }
+.community-tag-picker { width:72%; margin:18px 0 0; border:0; padding:0; }
+.community-tag-picker legend { margin-bottom:8px; color:#222; font-size:12px; font-weight:900; }
+.community-tag-picker legend em { margin-left:6px; color:#e24841; font-size:10px; font-style:normal; }
+.community-tag-options { display:flex; flex-wrap:wrap; gap:6px; }
+.community-tag-option { position:relative; }
+.community-tag-option input { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+.community-tag-option span { min-width:64px; height:34px; display:flex; align-items:center; justify-content:center; border:1px solid #bbb; background:#fff; color:#222; padding:0 13px; font-size:12px; font-weight:800; cursor:pointer; user-select:none; }
+.community-tag-option input:checked+span { border-color:#111; background:#111; color:#fff; }
+.community-tag-option input:focus-visible+span { outline:2px solid #555; outline-offset:2px; }
+.community-tag-picker+.forum-title-input { margin-top:10px; }
+.community-title-tags { margin-right:6px; color:#e24841; font-size:.9em; font-weight:900; letter-spacing:-.03em; white-space:nowrap; }
 .forum-title-input { display:block; width:72%; height:36px; margin:18px 0 10px; border:1px solid #bbb; padding:0 12px; outline:0; font-size:13px; font-weight:700; }
 .forum-title-input:focus,.forum-write textarea:focus { border-color:#111; }
 .forum-pin-option { width:max-content; max-width:100%; display:flex; align-items:center; gap:9px; margin:4px 0 11px; border:1px solid #ddd; background:#fafafa; padding:8px 11px; cursor:pointer; }
@@ -941,6 +952,10 @@ button { color:inherit; }
   .event-posts-heading h2 { font-size:22px; }
   .forum-write-title { align-items:flex-start; flex-direction:column; justify-content:center; gap:3px; }
   .forum-write-title strong { font-size:16px; }
+  .community-tag-picker { width:100%; margin-top:14px; }
+  .community-tag-options { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
+  .community-tag-option span { width:100%; min-width:0; height:40px; padding:0 5px; }
+  .community-title-tags { margin-right:4px; }
   .forum-title-input { width:100%; }
   .support-write .forum-title-input,.support-body-input { width:100%; }
   .support-body-input { min-height:270px; padding:12px; font-size:13px; }
