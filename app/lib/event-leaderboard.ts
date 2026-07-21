@@ -23,6 +23,17 @@ type PeriodRange = {
   endDate: string;
 };
 
+export type AdminEventRewardRow = {
+  boardType: EventBoardType;
+  rank: number;
+  userId: number | null;
+  nickname: string | null;
+  level: number | null;
+  activityCount: number;
+  points: number;
+  paidAt: string | null;
+};
+
 type CountRow = {
   userId: number;
   nickname: string;
@@ -157,9 +168,10 @@ async function settlePeriod(db: D1Database, period: PeriodRange, boardType: Even
     if (row.count < 1 || row.rewardPoints < 1) continue;
     const reference = `event:${period.type}:${boardType}:${dateLabelFromUtc(Date.parse(period.startAt))}:rank${row.rank}`;
     const inserted = await db.prepare(`
-      INSERT OR IGNORE INTO event_reward_payouts(period_type,board_type,period_start,period_end,user_id,rank,activity_count,points,created_at)
-      VALUES(?,?,?,?,?,?,?,?,?)
-    `).bind(period.type, boardType, period.startAt, period.endAt, row.userId, row.rank, row.count, row.rewardPoints, nowIso).run();
+      INSERT OR IGNORE INTO event_reward_payouts(
+        period_type,board_type,period_start,period_end,user_id,rank,activity_count,points,nickname_snapshot,level_snapshot,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+    `).bind(period.type, boardType, period.startAt, period.endAt, row.userId, row.rank, row.count, row.rewardPoints, row.nickname, row.level, nowIso).run();
     if ((inserted.meta as { changes?: number }).changes === 0) continue;
     await db.batch([
       db.prepare("UPDATE users SET points = points + ? WHERE id = ?").bind(row.rewardPoints, row.userId),
@@ -190,5 +202,61 @@ export async function loadEventLeaderboard(db: D1Database, type: EventPeriodType
     rewards,
     posts,
     comments,
+  };
+}
+
+function rewardSlots(rows: EventRankRow[], boardType: EventBoardType): AdminEventRewardRow[] {
+  return [1, 2, 3].map((rank) => {
+    const row = rows[rank - 1];
+    return {
+      boardType,
+      rank,
+      userId: row?.userId ?? null,
+      nickname: row?.nickname ?? null,
+      level: row?.level ?? null,
+      activityCount: row?.count ?? 0,
+      points: row?.rewardPoints ?? 0,
+      paidAt: null,
+    };
+  });
+}
+
+export async function loadAdminEventRewardAudit(db: D1Database, type: EventPeriodType) {
+  const now = new Date();
+  const current = await loadEventLeaderboard(db, type);
+  const previous = previousPeriod(type, now);
+  const paid = await db.prepare(`
+    SELECT p.board_type AS boardType, p.rank, p.user_id AS userId,
+      COALESCE(NULLIF(p.nickname_snapshot,''),u.nickname) AS nickname,
+      COALESCE(p.level_snapshot,u.level,1) AS level,
+      p.activity_count AS activityCount, p.points, p.created_at AS paidAt
+    FROM event_reward_payouts p
+    LEFT JOIN users u ON u.id = p.user_id
+    WHERE p.period_type = ? AND p.period_start = ?
+    ORDER BY CASE p.board_type WHEN 'posts' THEN 0 ELSE 1 END, p.rank ASC
+  `).bind(type, previous.startAt).all<AdminEventRewardRow>();
+
+  const paidBySlot = new Map((paid.results ?? []).map((row) => [`${row.boardType}:${row.rank}`, row]));
+  const previousRows = (["posts", "comments"] as const).flatMap((boardType) => [1, 2, 3].map((rank) => paidBySlot.get(`${boardType}:${rank}`) ?? {
+    boardType,
+    rank,
+    userId: null,
+    nickname: null,
+    level: null,
+    activityCount: 0,
+    points: 0,
+    paidAt: null,
+  }));
+
+  return {
+    periodType: type,
+    previous: { period: previous, rows: previousRows },
+    current: {
+      period: current.period,
+      rows: [
+        ...rewardSlots(current.posts, "posts"),
+        ...rewardSlots(current.comments, "comments"),
+      ],
+    },
   };
 }

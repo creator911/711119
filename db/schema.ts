@@ -372,6 +372,8 @@ export const eventRewardPayouts = sqliteTable("event_reward_payouts", {
   rank: integer("rank").notNull(),
   activityCount: integer("activity_count").notNull(),
   points: integer("points").notNull(),
+  nicknameSnapshot: text("nickname_snapshot"),
+  levelSnapshot: integer("level_snapshot"),
   createdAt: text("created_at").notNull(),
 }, (table) => [uniqueIndex("event_reward_payouts_period_user_unique").on(table.periodType, table.boardType, table.periodStart, table.userId)]);
 

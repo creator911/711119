@@ -225,6 +225,13 @@
       "when": 1784665354138,
       "tag": "0031_slippery_ken_ellis",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1784666309075,
+      "tag": "0032_lively_vertigo",
+      "breakpoints": true
     }
   ]
 }

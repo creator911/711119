@@ -5,8 +5,8 @@ import test from "node:test";
 
 test("모든 Drizzle 마이그레이션이 신규 DB에 순서대로 적용된다", async () => {
   const journal = JSON.parse(await readFile(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"));
-  assert.deepEqual(journal.entries.map((entry) => entry.idx), Array.from({ length: 32 }, (_, index) => index));
-  assert.equal(journal.entries.at(-1)?.tag, "0031_slippery_ken_ellis");
+  assert.deepEqual(journal.entries.map((entry) => entry.idx), Array.from({ length: 33 }, (_, index) => index));
+  assert.equal(journal.entries.at(-1)?.tag, "0032_lively_vertigo");
 
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys=ON");
@@ -60,6 +60,9 @@ test("모든 Drizzle 마이그레이션이 신규 DB에 순서대로 적용된�
   assert.ok(userColumns.includes("is_director"));
   assert.ok(userColumns.includes("is_partner"));
   assert.ok(userColumns.includes("level_locked"));
+  const eventRewardColumns = database.prepare("PRAGMA table_info(event_reward_payouts)").all().map(({ name }) => name);
+  assert.ok(eventRewardColumns.includes("nickname_snapshot"));
+  assert.ok(eventRewardColumns.includes("level_snapshot"));
 
   assert.deepEqual(database.prepare("SELECT username FROM admin_owners ORDER BY username").all(), []);
   assert.equal(database.prepare("SELECT COUNT(*) AS count FROM featured_vendor_posts").get().count, 4);

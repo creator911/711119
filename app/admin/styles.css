@@ -134,6 +134,40 @@
 .admin-tr input:disabled { background:#f0f1f3; color:#9a9ea5; cursor:not-allowed; }
 .owner-only { display:inline-block; border-radius:9px; background:#eeeef0; color:#777c84; padding:5px 7px; font-size:8px; font-style:normal; }
 .event-admin-grid { display:grid; grid-template-columns:minmax(360px,.8fr) minmax(420px,1.2fr); gap:16px; }
+.event-reward-audit { grid-column:1 / -1; }
+.event-reward-audit-title { min-height:72px; }
+.event-reward-audit-actions { display:flex; align-items:center; gap:7px; }
+.event-reward-period-tabs { display:flex; overflow:hidden; border:1px solid #d8dade; border-radius:5px; }
+.event-reward-period-tabs button { min-width:48px; height:30px; border:0; border-right:1px solid #d8dade; background:#fff; color:#777d85; font-size:9px; font-weight:900; cursor:pointer; }
+.event-reward-period-tabs button:last-child { border-right:0; }
+.event-reward-period-tabs button.active { background:#17191c; color:#fff; }
+.event-reward-audit-actions>button { height:30px; border:1px solid #d8dade; border-radius:5px; background:#fff; color:#555b63; padding:0 10px; font-size:9px; font-weight:800; cursor:pointer; }
+.event-reward-audit-actions>button:disabled { opacity:.5; cursor:wait; }
+.event-reward-periods { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding:14px; background:#f6f7f8; }
+.event-reward-periods.loading { opacity:.55; }
+.event-reward-period { min-width:0; overflow:hidden; border:1px solid #dfe1e4; border-radius:7px; background:#fff; }
+.event-reward-period>header { min-height:54px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid #e7e9eb; padding:9px 12px; }
+.event-reward-period>header>div { min-width:0; display:flex; flex-direction:column; gap:3px; }
+.event-reward-period>header b { font-size:11px; }
+.event-reward-period>header small { color:#8c9198; font-size:8px; }
+.event-reward-period>header em { flex:0 0 auto; border-radius:10px; padding:4px 7px; font-size:8px; font-style:normal; font-weight:900; }
+.event-reward-period>header em.paid { background:#edf7f1; color:#20834c; }
+.event-reward-period>header em.current { background:#fff1ef; color:#df4d47; }
+.event-reward-columns { min-height:25px; display:grid; grid-template-columns:74px 38px minmax(110px,1fr) 92px 70px; align-items:center; gap:7px; background:#f7f8f9; padding:0 10px; color:#989da4; font-size:8px; }
+.event-reward-board { position:relative; padding-left:74px; }
+.event-reward-board h3 { position:absolute; inset:0 auto 0 0; width:74px; display:flex; align-items:center; justify-content:center; margin:0; border-right:1px solid #eceef0; background:#fbfbfc; color:#33373d; font-size:9px; }
+.event-reward-row { min-height:35px; display:grid; grid-template-columns:38px minmax(110px,1fr) 92px 70px; align-items:center; gap:7px; border-top:1px solid #eff0f2; padding:0 10px; font-size:9px; }
+.event-reward-row:first-of-type { border-top:0; }
+.event-reward-row>strong { width:22px; height:22px; display:grid; place-items:center; border-radius:50%; background:#eef0f2; color:#555b63; font-size:9px; }
+.event-reward-row.rank-1>strong { background:#17191c; color:#fff; }
+.event-reward-row>span { min-width:0; overflow:hidden; color:#747a82; text-overflow:ellipsis; white-space:nowrap; }
+.event-reward-row>span:nth-child(2) { display:flex; align-items:center; gap:6px; color:#202329; }
+.event-reward-row i { flex:0 0 auto; border-radius:4px; background:#eff0f2; padding:3px 5px; color:#50565e; font-size:8px; font-style:normal; font-weight:900; }
+.event-reward-row b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+.event-reward-row em { color:#e04d47; font-size:10px; font-style:normal; font-weight:900; text-align:right; }
+.event-reward-row.empty { color:#aaaeb4; }
+.event-reward-row.empty small { color:#a1a5ab; font-size:8px; }
+.event-reward-error { margin:0; border-top:1px solid #f2d0cd; background:#fff3f2; color:#cf413b; padding:10px 14px; font-size:9px; font-weight:800; }
 .event-editor { align-self:start; }
 .admin-board-editor { align-self:start; }
 .admin-editor-fields { padding:18px; }
@@ -435,6 +469,17 @@
   .panel-title>div:last-child { width:100%; }
   .panel-title input { min-width:0; flex:1; }
   .panel-title>button,.panel-title>div:last-child button { min-height:40px; }
+  .event-reward-audit-title { min-height:0; }
+  .event-reward-audit-actions { width:100%; }
+  .event-reward-period-tabs { flex:1; }
+  .event-reward-period-tabs button { min-height:40px; flex:1; }
+  .event-reward-audit-actions>button { min-height:40px; }
+  .event-reward-periods { grid-template-columns:1fr; gap:9px; padding:9px; }
+  .event-reward-columns,.event-reward-row { grid-template-columns:28px minmax(80px,1fr) 58px; gap:5px; }
+  .event-reward-columns>span:first-child,.event-reward-columns>span:nth-child(4),.event-reward-row>span:nth-child(3) { display:none; }
+  .event-reward-board { padding-left:0; }
+  .event-reward-board h3 { position:static; width:auto; min-height:24px; justify-content:flex-start; border-right:0; border-top:1px solid #eceef0; padding:0 7px; font-size:8px; }
+  .event-reward-row { padding:0 7px; }
   .announcement-editor-fields { grid-template-columns:1fr; padding:15px 14px; }
   .announcement-content-field { grid-column:auto; }
   .announcement-mode-picker { grid-template-columns:1fr; margin:0 14px 14px; }

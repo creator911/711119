@@ -79,10 +79,10 @@ test("all Drizzle migrations apply once and preserve trigger statements", () => 
   try {
     assert.deepEqual(splitMigrationStatements("SELECT 1;--> statement-breakpoint\r\nSELECT 2;"), ["SELECT 1;", "SELECT 2;"]);
     const first = applyMigrations(fixture.database);
-    assert.equal(first.applied.length, 32);
+    assert.equal(first.applied.length, 33);
     assert.deepEqual(applyMigrations(fixture.database), { applied: [] });
 
-    assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM _node_migrations")[0].count, 32);
+    assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM _node_migrations")[0].count, 33);
     assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='system_announcements'")[0].count, 1);
     assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='system_announcement_receipts'")[0].count, 1);
     assert.ok(fixture.database._allSync("PRAGMA table_info(users)").some(({ name }) => name === "level_locked"));
