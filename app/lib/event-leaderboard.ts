@@ -1,3 +1,5 @@
+import { loadPointSettings, type PointRewardList } from "./point-settings";
+
 export type EventPeriodType = "weekly" | "monthly";
 export type EventBoardType = "posts" | "comments";
 
@@ -13,11 +15,6 @@ export type EventRankRow = {
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const REWARD_POINTS: Record<EventPeriodType, [number, number, number]> = {
-  weekly: [10000, 5000, 1000],
-  monthly: [10000, 5000, 1000],
-};
-
 type PeriodRange = {
   type: EventPeriodType;
   startAt: string;
@@ -139,7 +136,7 @@ async function paidUserIds(db: D1Database, period: PeriodRange, boardType: Event
   return new Set((rows.results ?? []).map((row) => row.userId));
 }
 
-async function rankRows(db: D1Database, period: PeriodRange, boardType: EventBoardType): Promise<EventRankRow[]> {
+async function rankRows(db: D1Database, period: PeriodRange, boardType: EventBoardType, rewardPoints: PointRewardList): Promise<EventRankRow[]> {
   const [counts, paid] = await Promise.all([queryRankCounts(db, boardType, period), paidUserIds(db, period, boardType)]);
   return counts.map((row, index) => ({
     rank: index + 1,
@@ -147,14 +144,14 @@ async function rankRows(db: D1Database, period: PeriodRange, boardType: EventBoa
     nickname: row.nickname,
     level: row.level,
     count: Number(row.count) || 0,
-    rewardPoints: REWARD_POINTS[period.type][index] ?? 0,
+    rewardPoints: rewardPoints[index] ?? 0,
     paid: paid.has(row.userId),
   }));
 }
 
-async function settlePeriod(db: D1Database, period: PeriodRange, boardType: EventBoardType, now = new Date()) {
+async function settlePeriod(db: D1Database, period: PeriodRange, boardType: EventBoardType, rewardPoints: PointRewardList, now = new Date()) {
   if (Date.parse(period.endAt) > now.getTime()) return;
-  const rows = await rankRows(db, period, boardType);
+  const rows = await rankRows(db, period, boardType, rewardPoints);
   const nowIso = now.toISOString();
   for (const row of rows.slice(0, 3)) {
     if (row.count < 1 || row.rewardPoints < 1) continue;
@@ -173,22 +170,24 @@ async function settlePeriod(db: D1Database, period: PeriodRange, boardType: Even
 
 export async function loadEventLeaderboard(db: D1Database, type: EventPeriodType) {
   const now = new Date();
+  const pointSettings = await loadPointSettings(db);
   await Promise.all([
-    settlePeriod(db, previousPeriod("weekly", now), "posts", now),
-    settlePeriod(db, previousPeriod("weekly", now), "comments", now),
-    settlePeriod(db, previousPeriod("monthly", now), "posts", now),
-    settlePeriod(db, previousPeriod("monthly", now), "comments", now),
+    settlePeriod(db, previousPeriod("weekly", now), "posts", pointSettings.eventRewards.weekly.posts, now),
+    settlePeriod(db, previousPeriod("weekly", now), "comments", pointSettings.eventRewards.weekly.comments, now),
+    settlePeriod(db, previousPeriod("monthly", now), "posts", pointSettings.eventRewards.monthly.posts, now),
+    settlePeriod(db, previousPeriod("monthly", now), "comments", pointSettings.eventRewards.monthly.comments, now),
   ]);
 
   const period = currentPeriod(type, now);
+  const rewards = pointSettings.eventRewards[type];
   const [posts, comments] = await Promise.all([
-    rankRows(db, period, "posts"),
-    rankRows(db, period, "comments"),
+    rankRows(db, period, "posts", rewards.posts),
+    rankRows(db, period, "comments", rewards.comments),
   ]);
 
   return {
     period,
-    rewards: { posts: REWARD_POINTS[type], comments: REWARD_POINTS[type] },
+    rewards,
     posts,
     comments,
   };

@@ -441,7 +441,7 @@ export default function Portal() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ category: writeKind, title: form.get("title"), titleColor: form.get("titleColor"), body: form.get("body"), isPinned: form.get("isPinned") === "on", ...(isCommunityBoardCategory(writeKind) ? { communityTags } : {}) }),
       });
-      const result = await response.json() as { post?: LivePost; error?: string };
+      const result = await response.json() as { post?: LivePost; earnedPoints?: number; error?: string };
       if (!response.ok || !result.post) throw new Error(result.error ?? "게시글을 저장하지 못했습니다.");
       const createdPost = result.post;
       setLivePosts((current) => ({
@@ -456,7 +456,15 @@ export default function Portal() {
         commentCount: createdPost.commentCount, isOwn: true, canEdit: true, canDelete: true, createdAt: createdPost.createdAt, live: true,
       });
       window.history.replaceState(null, "", `${window.location.pathname}?board=${writeKind}&post=${createdPost.id}`);
-      showToast("게시글이 등록되었습니다.");
+      if ((result.earnedPoints ?? 0) > 0) {
+        const earnedPoints = result.earnedPoints ?? 0;
+        setPoints((current) => current + earnedPoints);
+        setViewer((current) => current ? { ...current, points: current.points + earnedPoints } : current);
+        setMyPage(null);
+        showToast(`게시글이 등록되었습니다. +${earnedPoints.toLocaleString()}P`);
+      } else {
+        showToast("게시글이 등록되었습니다.");
+      }
     } catch (error) {
       showToast(error instanceof Error ? error.message : "게시글을 저장하지 못했습니다.");
     } finally {
@@ -702,6 +710,11 @@ export default function Portal() {
               setLivePosts((current) => ({ ...current, events: (current.events ?? []).filter((item) => item.id !== postId) }));
               window.history.replaceState(null, "", `${window.location.pathname}?board=events`);
             }}
+            onPointReward={(earnedPoints) => {
+              setPoints((current) => current + earnedPoints);
+              setViewer((current) => current ? { ...current, points: current.points + earnedPoints } : current);
+              setMyPage(null);
+            }}
             showToast={showToast}
           />
         ) : (
@@ -733,6 +746,11 @@ export default function Portal() {
               setSelectedPost(null);
               setLivePosts((current) => ({ ...current, [view as BoardKind]: (current[view as BoardKind] ?? []).filter((item) => item.id !== postId) }));
               window.history.replaceState(null, "", `${window.location.pathname}?board=${view}`);
+            }}
+            onPointReward={(earnedPoints) => {
+              setPoints((current) => current + earnedPoints);
+              setViewer((current) => current ? { ...current, points: current.points + earnedPoints } : current);
+              setMyPage(null);
             }}
             showToast={showToast}
           />
@@ -1194,7 +1212,7 @@ function formatPostTime(createdAt: string) {
 
 const formatPostAuthor = (post: Pick<BoardDisplayPost, "author" | "authorLevel">) => post.authorLevel > 0 ? `Lv.${post.authorLevel} ${post.author}` : post.author;
 const supportStatusLabel = (status: SupportInquiry["status"]) => status === "answered" ? "답변완료" : status === "closed" ? "종료" : "접수";
-const pointTypeLabel = (type: string) => type === "attendance" ? "출석체크" : type === "attendance_streak_reward" ? "개근보상" : type === "event_reward" ? "이벤트 보상" : type === "shop_purchase" ? "상점 구매" : type === "adjustment" ? "관리자 조정" : type === "discount" ? "할인 사용" : "포인트";
+const pointTypeLabel = (type: string) => type === "attendance" ? "출석체크" : type === "attendance_streak_reward" ? "개근보상" : type === "post_create" ? "글작성 보상" : type === "review_create" ? "후기작성 보상" : type === "comment_create" ? "댓글작성 보상" : type === "event_reward" ? "이벤트 보상" : type === "shop_purchase" ? "상점 구매" : type === "adjustment" ? "관리자 조정" : type === "discount" ? "할인 사용" : "포인트";
 const formatPointDate = (value: string) => new Intl.DateTimeFormat("ko-KR", {
   month: "2-digit",
   day: "2-digit",
@@ -1216,6 +1234,7 @@ type BoardPageProps = {
   onLoginRequired: () => void;
   onPostChange: (post: BoardDisplayPost) => void;
   onPostRemoved: (postId: number) => void;
+  onPointReward: (points: number) => void;
   showToast: (message: string) => void;
   hideHeading?: boolean;
 };
@@ -1317,7 +1336,7 @@ function EventRankTable({ title, description, activityLabel, rows, loading, unit
   </article>;
 }
 
-function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting, onWrite, onCancelWrite, onSubmit, onOpen, onLoginRequired, onPostChange, onPostRemoved, showToast, hideHeading = false }: BoardPageProps) {
+function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting, onWrite, onCancelWrite, onSubmit, onOpen, onLoginRequired, onPostChange, onPostRemoved, onPointReward, showToast, hideHeading = false }: BoardPageProps) {
   const [filter, setFilter] = useState<"all" | "popular" | "notice">("all");
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -1401,7 +1420,7 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
   return <section className={`board-page page-width ${hideHeading ? "embedded-board-page" : "compact-board-page"}`}>
     {!hideHeading && <div className="forum-heading compact-forum-heading"><p className="eyebrow">{kind === "notices" ? "NOTICE" : "COMMUNITY"}</p><h1>{boardLabels[kind]}</h1><p>{headingLead}</p></div>}
     {writing ? <BoardWritePage kind={kind} viewer={viewer} onCancel={onCancelWrite} onSubmit={onSubmit} submitting={submitting} /> : <>
-      {selectedPost && <BoardDetail key={selectedPost.id} kind={kind} post={selectedPost} viewer={viewer} onLoginRequired={onLoginRequired} onPostChange={changePost} onPostRemoved={removePost} showToast={showToast} />}
+      {selectedPost && <BoardDetail key={selectedPost.id} kind={kind} post={selectedPost} viewer={viewer} onLoginRequired={onLoginRequired} onPostChange={changePost} onPostRemoved={removePost} onPointReward={onPointReward} showToast={showToast} />}
       <BoardList kind={kind} posts={pagePosts} totalPosts={filteredPosts.length} pageStart={pageStart} filter={filter} loading={filter === "popular" && popularLoading} onFilter={changeFilter} onWrite={onWrite} onOpen={onOpen} />
       <div className="forum-bottom">
         <div className="forum-pagination" aria-label={`${boardLabels[kind]} 페이지 이동`}>
@@ -1479,7 +1498,7 @@ function BoardWritePage({ kind, viewer, onCancel, onSubmit, submitting }: { kind
   </form>;
 }
 
-function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostChange, onPostRemoved, showToast }: { kind: BoardKind; post: BoardDisplayPost; viewer: Viewer | null; onLoginRequired: () => void; onPostChange: (post: BoardDisplayPost) => void; onPostRemoved: (postId: number) => void; showToast: (message: string) => void }) {
+function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostChange, onPostRemoved, onPointReward, showToast }: { kind: BoardKind; post: BoardDisplayPost; viewer: Viewer | null; onLoginRequired: () => void; onPostChange: (post: BoardDisplayPost) => void; onPostRemoved: (postId: number) => void; onPointReward: (points: number) => void; showToast: (message: string) => void }) {
   const [post, setPost] = useState(initialPost);
   const [comments, setComments] = useState<PostComment[]>([]);
   const [commentBody, setCommentBody] = useState("");
@@ -1598,12 +1617,18 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
     setSubmitting(true);
     try {
       const response = await fetch(`/api/posts/${post.id}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: normalized }) });
-      const result = await response.json() as { comment?: PostComment; error?: string };
+      const result = await response.json() as { comment?: PostComment; earnedPoints?: number; error?: string };
       if (!response.ok || !result.comment) throw new Error(result.error ?? "댓글을 저장하지 못했습니다.");
       setComments((current) => [...current, result.comment!]);
       setCommentBody("");
       const next = { ...post, commentCount: post.commentCount + 1 };
-      setPost(next); onPostChange(next); showToast("댓글이 등록되었습니다.");
+      setPost(next); onPostChange(next);
+      if ((result.earnedPoints ?? 0) > 0) {
+        onPointReward(result.earnedPoints ?? 0);
+        showToast(`댓글이 등록되었습니다. +${(result.earnedPoints ?? 0).toLocaleString()}P`);
+      } else {
+        showToast("댓글이 등록되었습니다.");
+      }
       if (alsoRecommend) await vote("up", next);
     } catch (error) { showToast(error instanceof Error ? error.message : "댓글을 저장하지 못했습니다."); }
     finally { setSubmitting(false); }

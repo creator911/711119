@@ -8,21 +8,22 @@ export const MEMBER_LEVEL_REQUIREMENTS = [
   { level: 3, attendance: 30, posts: 20, comments: 50 },
   { level: 2, attendance: 5, posts: 5, comments: 10 },
 ] as const;
+export type MemberLevelRequirement = typeof MEMBER_LEVEL_REQUIREMENTS[number] | { level: number; attendance: number; posts: number; comments: number };
 
 export const isMemberLevel = (value: unknown): value is number =>
   Number.isInteger(value) && Number(value) >= MIN_MEMBER_LEVEL && Number(value) <= MAX_MEMBER_LEVEL;
 
 export const memberLevelLabel = (level: number) => `Lv.${level}`;
 
-export const automaticMemberLevel = (postCount: number, commentCount: number, attendanceCount = 0) =>
-  MEMBER_LEVEL_REQUIREMENTS.find((requirement) =>
+export const automaticMemberLevel = (postCount: number, commentCount: number, attendanceCount = 0, requirements: readonly MemberLevelRequirement[] = MEMBER_LEVEL_REQUIREMENTS) =>
+  requirements.find((requirement) =>
     attendanceCount >= requirement.attendance &&
     postCount >= requirement.posts &&
     commentCount >= requirement.comments
   )?.level ?? MIN_MEMBER_LEVEL;
 
-export const attendancePointsForLevel = (level: number) =>
-  50 + Math.max(0, Math.min(MAX_MEMBER_LEVEL, Math.trunc(level)) - MIN_MEMBER_LEVEL) * 10;
+export const attendancePointsForLevel = (level: number, basePoints = 50, levelStepPoints = 10) =>
+  basePoints + Math.max(0, Math.min(MAX_MEMBER_LEVEL, Math.trunc(level)) - MIN_MEMBER_LEVEL) * levelStepPoints;
 
 /**
  * 레벨 권한은 누적되지 않습니다.

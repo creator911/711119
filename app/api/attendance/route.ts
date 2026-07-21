@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { ATTENDANCE_STREAK_REWARDS } from "../../lib/attendance-rewards";
-import { attendancePointsForLevel, automaticMemberLevel, MAX_AUTOMATIC_MEMBER_LEVEL } from "../../lib/member-level";
+import { MAX_AUTOMATIC_MEMBER_LEVEL } from "../../lib/member-level";
+import { attendancePointsForSettings, automaticMemberLevelForSettings, loadPointSettings } from "../../lib/point-settings";
 
 const tokenOf = (request: Request) => request.headers.get("cookie")?.match(/(?:^|; )cn_session=([^;]+)/)?.[1];
 const dateInKorea = (date = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
@@ -50,6 +51,7 @@ export async function GET(request: Request) {
   const requestedMonth = url.searchParams.get("month") ?? today.slice(0, 7);
   const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth) ? requestedMonth : today.slice(0, 7);
   const user = await userFromSession(request);
+  const pointSettings = await loadPointSettings(env.DB);
 
   const calendarRequest = user
     ? env.DB.prepare(`
@@ -92,7 +94,7 @@ export async function GET(request: Request) {
       nickname: user.nickname,
       points: user.points,
       level: user.level,
-      attendancePoints: attendancePointsForLevel(user.level),
+      attendancePoints: attendancePointsForSettings(user.level, pointSettings),
       attended: dates.results.some((item) => item.date === today),
       ...stats,
     };
@@ -130,9 +132,10 @@ export async function POST(request: Request) {
       WHERE u.id=? AND u.status='active'
     `).bind(user.id).first<LevelProgressRow>();
     if (!progress) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
-    const calculatedLevel = Math.min(MAX_AUTOMATIC_MEMBER_LEVEL, automaticMemberLevel(progress.postCount, progress.commentCount, progress.attendanceCount + 1));
+    const pointSettings = await loadPointSettings(env.DB);
+    const calculatedLevel = Math.min(MAX_AUTOMATIC_MEMBER_LEVEL, automaticMemberLevelForSettings(progress.postCount, progress.commentCount, progress.attendanceCount + 1, pointSettings));
     const nextLevel = Boolean(progress.levelLocked) || progress.level >= 10 ? progress.level : Math.max(1, progress.level, calculatedLevel);
-    const attendancePoints = attendancePointsForLevel(nextLevel);
+    const attendancePoints = attendancePointsForSettings(nextLevel, pointSettings);
     const attendanceStatements = [
       env.DB.prepare("INSERT INTO attendance (user_id,attendance_date,points_awarded,greeting,created_at) VALUES (?,?,?,?,?)").bind(user.id, date, attendancePoints, message, createdAt),
       env.DB.prepare("UPDATE users SET points = points + ? WHERE id = ?").bind(attendancePoints, user.id),

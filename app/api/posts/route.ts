@@ -6,6 +6,7 @@ import { communityTagsFromMask, isCommunityBoardCategory, validateCommunityTags,
 import { normalizeTitleColor } from "../../lib/title-colors";
 import { hasRichMedia, normalizeRichTitle } from "../../lib/rich-text";
 import { refreshAutomaticMemberLevel } from "../../lib/member-level-progress";
+import { loadPointSettings } from "../../lib/point-settings";
 import {
   finalizeBodyMedia,
   mediaLifecycleErrorStatus,
@@ -88,6 +89,20 @@ export async function POST(request: Request) {
     const finalBody = await attachPostPoll(env.DB, postId, normalizedBody, poll, createdAt);
     await finalizeBodyMedia(env.DB, mediaClaim, "post", postId, finalBody, createdAt);
     saveCommitted = true;
+    let earnedPoints = 0;
+    try {
+      const pointSettings = await loadPointSettings(env.DB);
+      earnedPoints = category === "reviews" ? pointSettings.reviewCreatePoints : pointSettings.postCreatePoints;
+      if (earnedPoints > 0) {
+        await env.DB.batch([
+          env.DB.prepare("UPDATE users SET points = points + ? WHERE id = ?").bind(earnedPoints, user.id),
+          env.DB.prepare("INSERT INTO point_ledger(user_id,amount,type,status,reference,created_at) VALUES(?,?,?,'complete',?,?)").bind(user.id, earnedPoints, category === "reviews" ? "review_create" : "post_create", `${category}:${postId}`, createdAt),
+        ]);
+      }
+    } catch (pointError) {
+      earnedPoints = 0;
+      console.error("Post point reward failed", pointError);
+    }
     let authorLevel = user.level;
     try {
       authorLevel = await refreshAutomaticMemberLevel(env.DB, user.id);
@@ -96,6 +111,7 @@ export async function POST(request: Request) {
     }
     return Response.json({
       post: { id: postId, category, title: normalizedTitle, titleColor, body: finalBody, communityTags, author: user.nickname, authorLevel, views: 0, likes: 0, dislikes: 0, reportCount: 0, commentCount: 0, isNotice: false, isPinned, isOwn: true, canEdit: true, canDelete: true, createdAt },
+      earnedPoints,
     }, { status: 201 });
   } catch (error) {
     if (!saveCommitted && createdPostId) {

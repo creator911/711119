@@ -1,4 +1,5 @@
 import { automaticMemberLevel, MAX_AUTOMATIC_MEMBER_LEVEL } from "./member-level";
+import { loadPointSettings } from "./point-settings";
 
 type PreparedStatement<T = unknown> = {
   bind: (...values: T[]) => {
@@ -34,7 +35,8 @@ export async function refreshAutomaticMemberLevel(database: LevelProgressDatabas
   if (!row) return 1;
   if (Boolean(row.levelLocked) || row.level >= 10) return row.level;
 
-  const calculatedLevel = Math.min(MAX_AUTOMATIC_MEMBER_LEVEL, automaticMemberLevel(row.postCount, row.commentCount, row.attendanceCount));
+  const settings = await loadPointSettings(database as unknown as D1Database);
+  const calculatedLevel = Math.min(MAX_AUTOMATIC_MEMBER_LEVEL, automaticMemberLevel(row.postCount, row.commentCount, row.attendanceCount, [...settings.levelRequirements].sort((left, right) => right.level - left.level)));
   const nextLevel = Math.max(1, row.level, calculatedLevel);
   if (nextLevel !== row.level) {
     await database.prepare("UPDATE users SET level=? WHERE id=? AND level_locked=0 AND level<10").bind(nextLevel, userId).run();

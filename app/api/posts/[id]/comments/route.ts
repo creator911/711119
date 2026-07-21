@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { memberFromSession } from "../../../../lib/member-auth";
 import { refreshAutomaticMemberLevel } from "../../../../lib/member-level-progress";
+import { loadPointSettings } from "../../../../lib/point-settings";
 
 const parsePostId = (request: Request) => {
   const segments = new URL(request.url).pathname.split("/").filter(Boolean);
@@ -24,13 +25,28 @@ export async function POST(request: Request) {
     const inserted = await env.DB.prepare(`
       INSERT INTO post_comments(post_id,user_id,body,status,created_at) VALUES(?,?,?,'published',?)
     `).bind(postId, user.id, body, createdAt).run();
+    const commentId = Number(inserted.meta.last_row_id);
+    let earnedPoints = 0;
+    try {
+      const pointSettings = await loadPointSettings(env.DB);
+      earnedPoints = pointSettings.commentCreatePoints;
+      if (earnedPoints > 0) {
+        await env.DB.batch([
+          env.DB.prepare("UPDATE users SET points = points + ? WHERE id = ?").bind(earnedPoints, user.id),
+          env.DB.prepare("INSERT INTO point_ledger(user_id,amount,type,status,reference,created_at) VALUES(?,?,'comment_create','complete',?,?)").bind(user.id, earnedPoints, `post:${postId}:comment:${commentId}`, createdAt),
+        ]);
+      }
+    } catch (pointError) {
+      earnedPoints = 0;
+      console.error("Comment point reward failed", pointError);
+    }
     let authorLevel = user.level;
     try {
       authorLevel = await refreshAutomaticMemberLevel(env.DB, user.id);
     } catch (levelError) {
       console.error("Automatic member level refresh failed", levelError);
     }
-    return Response.json({ comment: { id: inserted.meta.last_row_id, body, author: user.nickname, authorLevel, createdAt } }, { status: 201 });
+    return Response.json({ comment: { id: commentId, body, author: user.nickname, authorLevel, createdAt }, earnedPoints }, { status: 201 });
   } catch (error) {
     console.error("Comment creation failed", error);
     return Response.json({ error: "댓글을 저장하지 못했습니다." }, { status: 500 });
