@@ -1194,7 +1194,7 @@ function PostTitleText({ title, titleColor }: { title: string; titleColor?: stri
 function CommunityPostTitle({ category, title, titleColor, tags }: { category: string; title: string; titleColor?: string; tags?: readonly CommunityTag[] }) {
   if (!isCommunityBoardCategory(category)) return <PostTitleText title={title} titleColor={titleColor} />;
   const visibleTags = tags?.length ? tags : (["일상"] as const);
-  return <><span className="community-title-tags" aria-label={`머릿글 ${visibleTags.join(", ")}`}>{visibleTags.map((tag) => `[${tag}]`).join(" ")}</span><PostTitleText title={title} titleColor={titleColor} /></>;
+  return <><span className="community-title-tags" aria-label={`머릿글 ${visibleTags.join(", ")}`}>{visibleTags.join(" ")}</span><PostTitleText title={title} titleColor={titleColor} /></>;
 }
 
 function BoardPreview({ kind, title, posts, onMore }: { kind: BoardKind; title: string; posts: ReturnType<typeof boardPosts>; onMore: () => void }) {
