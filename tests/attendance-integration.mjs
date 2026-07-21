@@ -69,12 +69,16 @@ const checkedIn = await json(await fetch(`${baseUrl}/api/attendance`, {
 }));
 assert.equal(checkedIn.response.status, 200);
 assert.equal(checkedIn.body.points, 50);
+assert.equal(checkedIn.body.level, 1);
+assert.equal(checkedIn.body.attendancePoints, 50);
 assert.equal(checkedIn.body.currentStreak, 1);
 assert.equal(checkedIn.body.rewardBonusPoints, 0);
 
 const summary = await json(await fetch(`${baseUrl}/api/attendance`, { headers: { Cookie: sessionCookie } }));
 assert.equal(summary.response.status, 200);
 assert.equal(summary.body.user.points, 50);
+assert.equal(summary.body.user.level, 1);
+assert.equal(summary.body.user.attendancePoints, 50);
 assert.equal(summary.body.user.attended, true);
 assert.ok(summary.body.entries.some((entry) => entry.greeting === greeting));
 assert.ok(summary.body.calendar.some((entry) => entry.date === summary.body.today && entry.points === 50));

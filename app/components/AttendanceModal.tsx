@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ATTENDANCE_STREAK_REWARDS } from "../lib/attendance-rewards";
+import { attendancePointsForLevel } from "../lib/member-level";
 
 const attendanceGreetings = [
   "역시 하루의 시작은 출장나라", "오늘도 출장나라와 함께 출발", "기분 좋은 하루 보내세요", "오늘도 모두 좋은 일만 가득", "출장나라 출석하고 하루 시작",
@@ -24,7 +25,7 @@ type AttendanceData = {
   calendar: Array<{ date: string; points: number }>;
   entries: AttendanceEntry[];
   streakRewards: StreakReward[];
-  user: null | { nickname: string; points: number; attended: boolean; totalDays: number; currentStreak: number; bestStreak: number };
+  user: null | { nickname: string; points: number; level: number; attendancePoints: number; attended: boolean; totalDays: number; currentStreak: number; bestStreak: number };
 };
 
 const randomGreeting = () => attendanceGreetings[Math.floor(Math.random() * attendanceGreetings.length)];
@@ -35,7 +36,7 @@ const fallbackRewards = ATTENDANCE_STREAK_REWARDS.map((reward) => ({ ...reward, 
 export default function AttendanceModal({ onClose, onLoginRequired, onAttendance, showToast }: {
   onClose: () => void;
   onLoginRequired: () => void;
-  onAttendance: (points: number) => void;
+  onAttendance: (points: number, level?: number) => void;
   showToast: (message: string) => void;
 }) {
   const now = new Date();
@@ -47,6 +48,7 @@ export default function AttendanceModal({ onClose, onLoginRequired, onAttendance
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const monthKey = `${year}-${pad(monthIndex + 1)}`;
+  const attendancePointAmount = data?.user?.attendancePoints ?? attendancePointsForLevel(data?.user?.level ?? 1);
 
   const loadAttendance = useCallback(async () => {
     setLoading(true);
@@ -107,16 +109,17 @@ export default function AttendanceModal({ onClose, onLoginRequired, onAttendance
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ greeting }),
       });
-      const result = await response.json() as { error?: string; points?: number; rewardBonusPoints?: number };
+      const result = await response.json() as { error?: string; points?: number; level?: number; attendancePoints?: number; rewardBonusPoints?: number };
       if (response.status === 401) {
         showToast("로그인 후 출석할 수 있어요.");
         onLoginRequired();
         return;
       }
       if (!response.ok) throw new Error(result.error ?? "출석 처리 중 오류가 발생했습니다.");
-      onAttendance(result.points ?? 50);
+      const awardedPoints = result.attendancePoints ?? attendancePointAmount;
+      onAttendance(result.points ?? awardedPoints, result.level);
       setGreeting(randomGreeting());
-      showToast(result.rewardBonusPoints ? `출석 완료! 50P + 개근보상 ${result.rewardBonusPoints.toLocaleString()}P가 적립됐어요.` : "출석 완료! 50P가 적립됐어요.");
+      showToast(result.rewardBonusPoints ? `출석 완료! ${awardedPoints.toLocaleString()}P + 개근보상 ${result.rewardBonusPoints.toLocaleString()}P가 적립됐어요.` : `출석 완료! ${awardedPoints.toLocaleString()}P가 적립됐어요.`);
       await loadAttendance();
     } catch (error) {
       showToast(error instanceof Error ? error.message : "출석 처리 중 오류가 발생했습니다.");
@@ -134,7 +137,7 @@ export default function AttendanceModal({ onClose, onLoginRequired, onAttendance
       <button type="button" className="modal-close" onClick={onClose} aria-label="출석체크 닫기">×</button>
       <header className="attendance-header">
         <div><p className="eyebrow">DAILY CHECK-IN</p><h2 id="attendance-title">출장나라 출석체크</h2></div>
-        <p>매일 한 번 출석하고 <b>50P</b>를 받아가세요.</p>
+        <p>매일 한 번 출석하고 <b>{attendancePointAmount.toLocaleString()}P</b>를 받아가세요.</p>
       </header>
 
       <div className="calendar-toolbar">
@@ -166,14 +169,14 @@ export default function AttendanceModal({ onClose, onLoginRequired, onAttendance
 
       <div className="attendance-stats">
         <div><b>출석 가능시간: 00시 00분 00초 ~ 23시 59분 59초</b><p>나의 총 출석일: <strong>{data?.user?.totalDays ?? 0}일</strong><span>나의 개근일: <strong>{data?.user?.currentStreak ?? 0}일째</strong></span><span>역대 최고 개근일: <strong>{data?.user?.bestStreak ?? 0}일</strong></span></p></div>
-        <div className="attendance-tabs"><button type="button" className={rewardsOpen ? "active" : ""} aria-expanded={rewardsOpen} aria-controls="streak-reward-panel" onClick={() => setRewardsOpen(true)}>🏆 개근보상</button><button type="button" className={!rewardsOpen ? "active" : ""} onClick={() => setRewardsOpen(false)}>🪙 매일 50P 적립</button></div>
+        <div className="attendance-tabs"><button type="button" className={rewardsOpen ? "active" : ""} aria-expanded={rewardsOpen} aria-controls="streak-reward-panel" onClick={() => setRewardsOpen(true)}>🏆 개근보상</button><button type="button" className={!rewardsOpen ? "active" : ""} onClick={() => setRewardsOpen(false)}>🪙 매일 {attendancePointAmount.toLocaleString()}P 적립</button></div>
       </div>
 
       {data?.user?.attended ? <div className="attendance-complete"><span>출석<br />체크</span><div><h3>오늘 출석체크 완료! 내일도 잊지 마세요!</h3><p>출석체크는 하루 1회, 00시 00분에 갱신됩니다.</p></div></div> : <form className="attendance-form" onSubmit={submitAttendance}><input value={greeting} onChange={(event) => setGreeting(event.target.value)} maxLength={50} aria-label="출석 인사" placeholder="역시 하루의 시작은 출장나라" /><button type="submit" disabled={submitting}>{submitting ? "처리 중…" : "출석체크 도장찍기"}<span aria-hidden="true">출석</span></button></form>}
 
       <div className="attendance-board">
         <div className="attendance-board-title"><h3>오늘의 출석 인사</h3><span>{loading ? "불러오는 중…" : `${data?.entries.length ?? 0}명이 출석했어요`}</span></div>
-        <div className="attendance-table"><div className="attendance-tr head"><span>순서</span><span>출석시간</span><span>닉네임</span><span>출석인사</span><span>적립포인트</span><span>누적출석</span></div>{data?.entries.length ? data.entries.map((entry, index) => <div className="attendance-tr" key={entry.id}><span>{index + 1}</span><span>{formatTime(entry.createdAt)}</span><b>{entry.nickname}</b><span>{entry.greeting}</span><strong>50P</strong><span>{entry.totalDays}일</span></div>) : <p className="attendance-empty">오늘 첫 번째 출석 인사를 남겨보세요.</p>}</div>
+        <div className="attendance-table"><div className="attendance-tr head"><span>순서</span><span>출석시간</span><span>닉네임</span><span>출석인사</span><span>적립포인트</span><span>누적출석</span></div>{data?.entries.length ? data.entries.map((entry, index) => <div className="attendance-tr" key={entry.id}><span>{index + 1}</span><span>{formatTime(entry.createdAt)}</span><b>{entry.nickname}</b><span>{entry.greeting}</span><strong>{entry.points.toLocaleString()}P</strong><span>{entry.totalDays}일</span></div>) : <p className="attendance-empty">오늘 첫 번째 출석 인사를 남겨보세요.</p>}</div>
       </div>
     </section>
   </div>;

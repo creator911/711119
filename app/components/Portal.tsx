@@ -14,6 +14,7 @@ import { horizontalScrollAvailability, horizontalScrollTarget } from "../lib/hor
 import { vendorCategories, vendorRegionGroups as regionGroups, writableVendorCategories } from "../lib/vendor-regions";
 import { COMMUNITY_TAGS, isCommunityBoardCategory, type CommunityTag } from "../lib/community-tags";
 import { TITLE_COLOR_OPTIONS, type TitleColor } from "../lib/title-colors";
+import { attendancePointsForLevel } from "../lib/member-level";
 
 type View = "home" | "notices" | "vendors" | "community" | "reviews" | "events" | "partner" | "support" | "mypage" | "shop";
 type BoardKind = "notices" | "reviews" | "events" | "gifs" | "community";
@@ -613,7 +614,7 @@ export default function Portal() {
             </section>
 
             <section className="editorial page-width">
-              <div><span>WELCOME BENEFIT</span><h2>오늘 가입하면<br />첫 출석부터 50P</h2><p>매일 출석하고, 포인트로 더 편리하게 이용하세요.</p><button onClick={() => setModal(viewer ? "attendance" : "signup")}>{viewer ? "오늘 출석하기" : "3초 회원가입"}</button></div>
+              <div><span>WELCOME BENEFIT</span><h2>오늘 출석하면<br />{attendancePointsForLevel(viewer?.level ?? 1)}P 적립</h2><p>레벨이 오를수록 출석 포인트도 함께 올라갑니다.</p><button onClick={() => setModal(viewer ? "attendance" : "signup")}>{viewer ? "오늘 출석하기" : "3초 회원가입"}</button></div>
               <img src="/images/vendor-04.jpg" alt="편안한 웰니스 공간" />
             </section>
           </>
@@ -750,7 +751,7 @@ export default function Portal() {
         </div>
       </footer>
 
-      {modal === "attendance" ? <AttendanceModal onClose={() => setModal(null)} onLoginRequired={() => setModal("login")} onAttendance={(nextPoints) => { setPoints(nextPoints); setAttended(true); setViewer((current) => current ? { ...current, points: nextPoints, attended: true } : current); }} showToast={showToast} /> : modal && <Modal type={modal} onClose={() => setModal(null)} onSubmit={submitAccount} onSwitch={setModal} submitting={accountSubmitting} />}
+      {modal === "attendance" ? <AttendanceModal onClose={() => setModal(null)} onLoginRequired={() => setModal("login")} onAttendance={(nextPoints, nextLevel) => { setPoints(nextPoints); setAttended(true); setViewer((current) => current ? { ...current, points: nextPoints, level: nextLevel ?? current.level, attended: true } : current); }} showToast={showToast} /> : modal && <Modal type={modal} onClose={() => setModal(null)} onSubmit={submitAccount} onSwitch={setModal} submitting={accountSubmitting} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );
