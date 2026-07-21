@@ -49,19 +49,21 @@ button { color:inherit; }
 .hero-vendor-search button:hover { background:linear-gradient(135deg,var(--sky-deep) 0%,var(--sky) 100%); }
 .hero-vendor-search button:focus-visible { outline-color:#2f95de; outline-offset:3px; }
 .hero-search-panel>small { display:block; margin-top:8px; color:#6b91ad; font-size:11px; }
-.quick-strip { min-width:0; min-height:210px; display:grid; grid-template-rows:72px 1fr; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#fff; box-shadow:0 12px 30px rgba(0,0,0,.04); }
+.quick-strip { min-width:0; min-height:210px; display:grid; grid-template-rows:72px 1fr; border:1px solid #b8ddf8; border-radius:14px; overflow:hidden; background:#fff; box-shadow:0 12px 30px rgba(66,150,220,.1); }
 .quick-label { color:#777; font-size:13px; }
 .quick-strip strong { font-size:19px; margin-left:auto; }
-.quick-strip button { border:1px solid #dedede; border-radius:6px; background:#fff; padding:8px 12px; font-size:12px; font-weight:800; cursor:pointer; }
-.quick-strip button.done { color:#929292; background:#f4f4f4; }
+.quick-strip button { border:1px solid #b8ddf8; border-radius:6px; background:linear-gradient(135deg,var(--sky) 0%,#78c6f6 100%); color:#fff; padding:8px 12px; font-size:12px; font-weight:800; cursor:pointer; box-shadow:0 6px 14px rgba(90,175,239,.18); transition:.18s; }
+.quick-strip button:hover { background:linear-gradient(135deg,var(--sky-deep) 0%,var(--sky) 100%); }
+.quick-strip button.done { border-color:#cfe8fb; color:var(--sky-deep); background:#fff; box-shadow:0 5px 14px rgba(90,175,239,.1); }
+.quick-strip button.done:hover { background:var(--sky-soft); }
 .quick-account { min-width:0; display:grid; grid-template-rows:1fr 1fr; }
 .quick-account>div { min-width:0; display:flex; align-items:center; gap:14px; padding:12px 20px; }
 .quick-account>div+div { border-top:1px solid var(--line); }
 .point-summary strong { color:#111; }
 .point-shop-link { margin-left:auto; display:inline-flex; align-items:center; gap:10px; border:0!important; background:transparent!important; padding:4px 0!important; color:#111; }
 .point-shop-link strong { margin:0; font-size:19px; }
-.point-shop-link small { color:#777; font-size:11px; font-weight:800; }
-.point-shop-link:hover small { color:var(--coral); }
+.point-shop-link small { color:var(--sky-deep); font-size:11px; font-weight:900; }
+.point-shop-link:hover small { color:var(--sky); }
 .attendance-status { color:#777; font-size:14px!important; }
 .attendance-status.complete { color:#e44343; }
 .quick-trust { display:flex; align-items:center; gap:14px; padding:14px 20px; background:#0d0f12; color:#fff; }
