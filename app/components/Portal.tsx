@@ -1465,7 +1465,7 @@ function CommunityTagPicker({ value, onChange }: { value: readonly CommunityTag[
     <div className="community-tag-options">
       {COMMUNITY_TAGS.map((tag) => <label className="community-tag-option" key={tag}>
         <input type="checkbox" name="communityTags" value={tag} checked={value.includes(tag)} onChange={() => toggle(tag)} />
-        <span>[{tag}]</span>
+        <span>{tag}</span>
       </label>)}
     </div>
   </fieldset>;
