@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { adminSession } from "../../../lib/admin-auth";
 import { memberFromSession, type MemberSession } from "../../../lib/member-auth";
-import { normalizeRichBody } from "../../../lib/rich-text";
+import { normalizeRichBody, normalizeRichTitle } from "../../../lib/rich-text";
 import {
   bodyMediaFinalizeStatements,
   mediaLifecycleErrorStatus,
@@ -91,7 +91,7 @@ export async function PATCH(request: Request) {
     const industry = typeof payload.industry === "string" ? payload.industry.trim() : "";
     const region = typeof payload.region === "string" ? payload.region.trim() : "";
     const district = typeof payload.district === "string" ? payload.district.trim() : "";
-    const title = typeof payload.title === "string" ? payload.title.trim().replace(/\s+/g, " ") : "";
+    const { title, textLength: titleLength } = normalizeRichTitle(typeof payload.title === "string" ? payload.title : "");
     const titleColor = Object.prototype.hasOwnProperty.call(payload, "titleColor")
       ? normalizeTitleColor(payload.titleColor)
       : post.titleColor;
@@ -105,7 +105,7 @@ export async function PATCH(request: Request) {
     const { body, textLength } = normalizeRichBody(sourceBody);
     const hasMedia = /<(?:img|video|iframe)\b/i.test(body);
     if (/post-poll-slot/i.test(body)) return Response.json({ error: "업체정보 글에는 투표를 넣을 수 없습니다." }, { status: 400 });
-    if (title.length < 2 || title.length > 80) return Response.json({ error: "제목은 2~80자로 입력해 주세요." }, { status: 400 });
+    if (titleLength < 2 || titleLength > 80) return Response.json({ error: "제목은 2~80자로 입력해 주세요." }, { status: 400 });
     if ((textLength < 2 && !hasMedia) || textLength > 3000 || body.length > 20000) return Response.json({ error: "내용은 2~3,000자로 입력해 주세요." }, { status: 400 });
     const actorKey = await mediaActorKey(request, env);
     if (!actorKey) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });

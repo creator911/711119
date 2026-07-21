@@ -132,3 +132,93 @@ export function normalizeRichBody(input: string) {
 export function renderRichBody(input: string) {
   return /<\/?[a-z][\s\S]*>/i.test(input) ? sanitizeRichHtml(input) : escapeText(input).replace(/\n/g, "<br />");
 }
+
+const titleAllowedTags = new Set(["span", "font", "b", "strong", "i", "em", "u", "s", "strike"]);
+const safeTitleColor = (value: string) => {
+  const trimmed = value.trim();
+  if (/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(trimmed)) return trimmed.toLowerCase();
+  const rgb = trimmed.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i);
+  if (!rgb) return "";
+  const [r, g, b] = [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  if ([r, g, b].some((channel) => !Number.isInteger(channel) || channel < 0 || channel > 255)) return "";
+  return `rgb(${r},${g},${b})`;
+};
+
+const safeTitleStyle = (value: string) => value
+  .split(";")
+  .map((part) => part.trim())
+  .filter(Boolean)
+  .map((part) => {
+    const [property = "", ...rest] = part.split(":");
+    const name = property.trim().toLowerCase();
+    const styleValue = rest.join(":").trim();
+    if (name !== "color") return "";
+    const color = safeTitleColor(styleValue);
+    return color ? `color:${color}` : "";
+  })
+  .filter(Boolean)
+  .join(";");
+
+const safeTitleAttrs = (tag: string, raw: string) => {
+  const attrs: string[] = [];
+  for (const match of raw.matchAll(/([a-zA-Z0-9:-]+)\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g)) {
+    const name = match[1].toLowerCase();
+    const value = match[3] ?? match[4] ?? match[5] ?? "";
+    if (name.startsWith("on")) continue;
+    if (name === "style") {
+      const style = safeTitleStyle(value);
+      if (style) attrs.push(`style="${escapeAttr(style)}"`);
+      continue;
+    }
+    if (tag === "font" && name === "color") {
+      const color = safeTitleColor(value);
+      if (color) attrs.push(`color="${escapeAttr(color)}"`);
+    }
+  }
+  return attrs.length ? ` ${attrs.join(" ")}` : "";
+};
+
+export function stripRichTitle(input: string) {
+  return input
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function sanitizeRichTitle(input: string) {
+  const source = input.trim().slice(0, 1200).replace(/[\r\n\t]+/g, " ");
+  let html = "";
+  let lastIndex = 0;
+  source.replace(/<\/?([a-zA-Z0-9]+)([^>]*)>/g, (match, rawTag, rawAttrs, offset) => {
+    html += escapeText(source.slice(lastIndex, offset));
+    lastIndex = offset + match.length;
+    const tag = rawTag.toLowerCase();
+    if (!titleAllowedTags.has(tag)) return "";
+    if (match.startsWith("</")) {
+      html += `</${tag}>`;
+      return "";
+    }
+    html += `<${tag}${safeTitleAttrs(tag, rawAttrs)}>`;
+    return "";
+  });
+  html += escapeText(source.slice(lastIndex));
+  return html
+    .replace(/<([^ >]+)(?:\s[^>]*)?><\/\1>/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function normalizeRichTitle(input: string) {
+  const title = sanitizeRichTitle(input);
+  return { title, textLength: stripRichTitle(title).length };
+}
+
+export function renderRichTitle(input: string) {
+  return /<\/?[a-z][\s\S]*>/i.test(input) ? sanitizeRichTitle(input) : escapeText(input);
+}

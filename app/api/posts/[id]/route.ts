@@ -3,7 +3,7 @@ import { adminSession } from "../../../lib/admin-auth";
 import { memberFromSession, type MemberSession } from "../../../lib/member-auth";
 import { loadPostPoll } from "../../../lib/post-poll-results";
 import { PollValidationError, preparePostBody } from "../../../lib/post-polls";
-import { hasRichMedia } from "../../../lib/rich-text";
+import { hasRichMedia, normalizeRichTitle } from "../../../lib/rich-text";
 import {
   bodyMediaFinalizeStatements,
   mediaLifecycleErrorStatus,
@@ -97,7 +97,7 @@ export async function PATCH(request: Request) {
     if (!canManagePost(viewer, post, adminActor)) return Response.json({ error: "게시글을 수정할 권한이 없습니다." }, { status: 403 });
 
     const payload = await request.json() as { title?: unknown; titleColor?: unknown; body?: unknown; isPinned?: unknown; communityTags?: unknown };
-    const title = typeof payload.title === "string" ? payload.title.trim().replace(/\s+/g, " ") : "";
+    const { title, textLength: titleLength } = normalizeRichTitle(typeof payload.title === "string" ? payload.title : "");
     const titleColor = Object.prototype.hasOwnProperty.call(payload, "titleColor")
       ? normalizeTitleColor(payload.titleColor)
       : post.titleColor;
@@ -115,7 +115,7 @@ export async function PATCH(request: Request) {
       return Response.json({ error: "머릿글은 커뮤니티 글에만 사용할 수 있습니다." }, { status: 400 });
     }
     if (titleColor === null) return Response.json({ error: "제목 색상을 확인해 주세요." }, { status: 400 });
-    if (title.length < 2 || title.length > 80) return Response.json({ error: "제목은 2~80자로 입력해 주세요." }, { status: 400 });
+    if (titleLength < 2 || titleLength > 80) return Response.json({ error: "제목은 2~80자로 입력해 주세요." }, { status: 400 });
     if ((textLength < 2 && !hasMedia && !poll) || textLength > 3000 || body.length > 20000) {
       return Response.json({ error: "내용은 2~3,000자로 입력해 주세요." }, { status: 400 });
     }

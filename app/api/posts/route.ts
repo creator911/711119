@@ -4,7 +4,7 @@ import { attachPostPoll, PollValidationError, preparePostBody } from "../../lib/
 import { buildPostListQuery } from "../../lib/post-list-query";
 import { communityTagsFromMask, isCommunityBoardCategory, validateCommunityTags, type CommunityTag } from "../../lib/community-tags";
 import { normalizeTitleColor } from "../../lib/title-colors";
-import { hasRichMedia } from "../../lib/rich-text";
+import { hasRichMedia, normalizeRichTitle } from "../../lib/rich-text";
 import { refreshAutomaticMemberLevel } from "../../lib/member-level-progress";
 import {
   finalizeBodyMedia,
@@ -51,11 +51,11 @@ export async function POST(request: Request) {
   try {
     const payload = await request.json() as { category?: unknown; title?: unknown; titleColor?: unknown; body?: unknown; isPinned?: unknown; communityTags?: unknown };
     const category = typeof payload.category === "string" ? payload.category : "";
-    const title = typeof payload.title === "string" ? payload.title : "";
+    const rawTitle = typeof payload.title === "string" ? payload.title : "";
     const titleColor = normalizeTitleColor(payload.titleColor);
     const body = typeof payload.body === "string" ? payload.body : "";
     const isPinned = payload.isPinned === true;
-    const normalizedTitle = title.trim().replace(/\s+/g, " ");
+    const { title: normalizedTitle, textLength: titleLength } = normalizeRichTitle(rawTitle);
     const { body: normalizedBody, textLength, poll } = preparePostBody(body);
     const hasMedia = hasRichMedia(normalizedBody);
     let communityTags: CommunityTag[] = [];
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
     } else if (payload.communityTags !== undefined && (!Array.isArray(payload.communityTags) || payload.communityTags.length > 0)) {
       return Response.json({ error: "머릿글은 커뮤니티 글에만 사용할 수 있습니다." }, { status: 400 });
     }
-    if (normalizedTitle.length < 2 || normalizedTitle.length > 80) return Response.json({ error: "제목은 2–80자로 입력해 주세요." }, { status: 400 });
+    if (titleLength < 2 || titleLength > 80) return Response.json({ error: "제목은 2–80자로 입력해 주세요." }, { status: 400 });
     if ((textLength < 2 && !hasMedia && !poll) || textLength > 3000 || normalizedBody.length > 20000) return Response.json({ error: "내용은 2–3,000자로 입력해 주세요." }, { status: 400 });
     mediaClaim = await reserveBodyMedia(env.DB, memberMediaActorKey(user.id), normalizedBody);
     const createdAt = new Date().toISOString();

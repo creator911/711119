@@ -3,12 +3,13 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import AttendanceModal from "./AttendanceModal";
 import { FeaturedVendorDetail, FeaturedVendorGrid, type FeaturedVendorPost } from "./FeaturedVendors";
+import RichTitleInput from "./RichTitleInput";
 import RichTextEditor from "./RichTextEditor";
 import ShopPage from "./ShopPage";
 import { visiblePageNumbers } from "../lib/board-pagination";
 import { getSampleBoardPosts } from "../lib/board-sample-posts";
 import { comparePopularPosts, isInPopularWindow, postCreatedTime } from "../lib/popular-posts";
-import { renderRichBody } from "../lib/rich-text";
+import { renderRichBody, renderRichTitle, stripRichTitle } from "../lib/rich-text";
 import { horizontalScrollAvailability, horizontalScrollTarget } from "../lib/horizontal-scroll";
 import { vendorCategories, vendorRegionGroups as regionGroups, writableVendorCategories } from "../lib/vendor-regions";
 import { COMMUNITY_TAGS, isCommunityBoardCategory, type CommunityTag } from "../lib/community-tags";
@@ -1134,8 +1135,7 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
         {!editing && assignments.length === 0 && <p className="vendor-assignment-empty">관리자에게 담당 상세지역을 배정받은 뒤 등록할 수 있습니다.</p>}
         {!editing && assignments.length > 0 && availableAssignments.length === 0 && <p className="vendor-assignment-empty">배정된 모든 상세지역에 글을 등록했습니다.</p>}
       </fieldset>
-      <input className="vendor-title-input" value={writeTitle} onChange={(event) => setWriteTitle(event.target.value)} minLength={2} maxLength={80} placeholder="업체정보 제목을 입력해 주세요." required />
-      <TitleColorPicker value={writeTitleColor} onChange={setWriteTitleColor} />
+      <RichTitleInput value={writeTitle} onChange={setWriteTitle} placeholder="업체정보 제목을 입력해 주세요." ariaLabel="업체정보 제목" />
       <RichTextEditor name="vendorBody" value={writeBody} onChange={setWriteBody} onBusyChange={setEditorBusy} allowPoll={false} placeholder="업체 소개와 안내 내용을 입력해 주세요." />
       <div className="vendor-editor-actions"><button type="button" disabled={editorBusy} onClick={closeEditor}>취소</button><button type="submit" disabled={submitting || editorBusy || !writeIndustry || !writeArea || !writeTitle.trim()}>{editorBusy ? "첨부 중…" : submitting ? "저장 중…" : editing ? "수정 완료" : "등록"}</button></div>
     </form>
@@ -1162,14 +1162,14 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
     </div>
     <div className="vendor-board-table" role="table" aria-label="지역별 업체정보 목록">
       <div className="vendor-board-head" role="row"><span role="columnheader">업종</span><span role="columnheader">지역</span><span role="columnheader">상세</span><b role="columnheader">제목</b></div>
-      <div className="vendor-board-list">{loading ? <p className="vendor-board-empty">불러오는 중…</p> : posts.length ? posts.map((post) => <button type="button" className="vendor-board-row" aria-label={`${post.industry} ${post.region} ${post.district} ${post.title} 업체정보 보기`} key={post.id} onClick={() => void openPost(post)}><span>{post.industry}</span><span>{post.region}</span><span>{post.district}</span><span className="vendor-board-subject"><PostTitleText title={post.title} titleColor={post.titleColor} /></span></button>) : <p className="vendor-board-empty">{search ? "검색 조건에 맞는 업체정보 글이 없습니다." : "조건에 맞는 업체정보 글이 없습니다."}</p>}</div>
+      <div className="vendor-board-list">{loading ? <p className="vendor-board-empty">불러오는 중…</p> : posts.length ? posts.map((post) => <button type="button" className="vendor-board-row" aria-label={`${post.industry} ${post.region} ${post.district} ${stripRichTitle(post.title)} 업체정보 보기`} key={post.id} onClick={() => void openPost(post)}><span>{post.industry}</span><span>{post.region}</span><span>{post.district}</span><span className="vendor-board-subject"><PostTitleText title={post.title} titleColor={post.titleColor} /></span></button>) : <p className="vendor-board-empty">{search ? "검색 조건에 맞는 업체정보 글이 없습니다." : "조건에 맞는 업체정보 글이 없습니다."}</p>}</div>
     </div>
     {nextCursor && <button className="vendor-board-more" type="button" disabled={loadingMore} onClick={() => void load(nextCursor)}>{loadingMore ? "불러오는 중…" : "이전 업체정보 더보기"}</button>}
   </section>;
 }
 
 function PostTitleText({ title, titleColor }: { title: string; titleColor?: string }) {
-  return <span className="post-title-text" style={titleColor ? { color: titleColor } : undefined}>{title}</span>;
+  return <span className="post-title-text" style={titleColor ? { color: titleColor } : undefined} dangerouslySetInnerHTML={{ __html: renderRichTitle(title) }} />;
 }
 
 function CommunityPostTitle({ category, title, titleColor, tags }: { category: string; title: string; titleColor?: string; tags?: readonly CommunityTag[] }) {
@@ -1360,7 +1360,7 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
     .filter((post) => !post.isNotice && popularNow > 0 && isInPopularWindow(post, popularNow))
     .sort(comparePopularPosts);
   const sourcePosts = filter === "popular" ? popularPosts : allPosts;
-  const searchedPosts = sourcePosts.filter((post) => !searchTerm || `${post.communityTags.join(" ")} ${post.title} ${post.author}`.toLowerCase().includes(searchTerm.toLowerCase()));
+  const searchedPosts = sourcePosts.filter((post) => !searchTerm || `${post.communityTags.join(" ")} ${stripRichTitle(post.title)} ${post.author}`.toLowerCase().includes(searchTerm.toLowerCase()));
   const filteredPosts = searchedPosts.filter((post) => filter !== "notice" || post.isNotice);
   const totalPages = Math.max(1, Math.ceil(filteredPosts.length / BOARD_PAGE_SIZE));
   const activePage = Math.min(currentPage, totalPages);
@@ -1464,15 +1464,14 @@ function TitleColorPicker({ value, onChange }: { value: TitleColor; onChange: (c
 }
 
 function BoardWritePage({ kind, viewer, onCancel, onSubmit, submitting }: { kind: BoardKind; viewer: Viewer | null; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; submitting: boolean }) {
+  const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [editorBusy, setEditorBusy] = useState(false);
   const [communityTags, setCommunityTags] = useState<CommunityTag[]>([]);
-  const [titleColor, setTitleColor] = useState<TitleColor>("");
   return <form className="forum-write" onSubmit={(event) => { if (editorBusy) { event.preventDefault(); return; } onSubmit(event); }}>
     <div className="forum-write-title"><strong>{boardLabels[kind]} 글쓰기</strong><span>건강한 게시판 문화를 함께 만들어 주세요.</span></div>
     {isCommunityBoardCategory(kind) && <CommunityTagPicker value={communityTags} onChange={setCommunityTags} />}
-    <input className="forum-title-input" name="title" required minLength={2} maxLength={80} autoFocus placeholder="제목을 입력해 주세요." />
-    <TitleColorPicker value={titleColor} onChange={setTitleColor} />
+    <RichTitleInput name="title" value={title} onChange={setTitle} autoFocus placeholder="제목을 입력해 주세요." />
     {viewer?.level === 10 && (kind === "community" || kind === "reviews") && <label className="forum-pin-option"><input type="checkbox" name="isPinned" /> <span><b>상단 고정</b><small>체크하면 게시판 최상단에 고정됩니다.</small></span></label>}
     <RichTextEditor name="body" value={body} onChange={setBody} onBusyChange={setEditorBusy} placeholder="내용을 입력해 주세요." />
     <div className="forum-write-actions"><button type="button" disabled={editorBusy} onClick={onCancel}>취소</button><button type="submit" disabled={submitting || editorBusy}>{editorBusy ? "첨부 중…" : submitting ? "등록 중…" : "등록"}</button></div>
@@ -1614,8 +1613,7 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
     <form className="forum-write forum-edit-form" onSubmit={submitEdit}>
       <div className="forum-write-title"><strong>{boardLabels[kind]} 글 수정</strong><span>수정 권한은 작성자와 관리자에게만 있습니다.</span></div>
       {isCommunityBoardCategory(kind) && <CommunityTagPicker value={editCommunityTags} onChange={setEditCommunityTags} />}
-      <input className="forum-title-input" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} required minLength={2} maxLength={80} autoFocus aria-label="게시글 제목" />
-      <TitleColorPicker value={editTitleColor} onChange={setEditTitleColor} />
+      <RichTitleInput value={editTitle} onChange={setEditTitle} autoFocus ariaLabel="게시글 제목" placeholder="제목을 입력해 주세요." />
       {(post.canPin || viewer?.level === 10) && (kind === "community" || kind === "reviews") && <label className="forum-pin-option"><input type="checkbox" checked={editPinned} onChange={(event) => setEditPinned(event.target.checked)} /> <span><b>상단 고정</b><small>체크하면 게시판 최상단에 고정됩니다.</small></span></label>}
       <RichTextEditor name="body" value={editBody} onChange={setEditBody} onBusyChange={setEditBusy} placeholder="내용을 입력해 주세요." />
       <div className="forum-write-actions"><button type="button" disabled={editBusy} onClick={() => { setEditTitle(post.title); setEditTitleColor((post.titleColor || "") as TitleColor); setEditBody(post.body); setEditPinned(Boolean(post.isPinned)); setEditCommunityTags(post.communityTags); setEditing(false); }}>취소</button><button type="submit" disabled={actionSubmitting || editBusy}>{editBusy ? "첨부 중…" : actionSubmitting ? "수정 중…" : "수정 완료"}</button></div>

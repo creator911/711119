@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { isAdminRequest } from "../../../lib/admin-auth";
 import { attachPostPoll, PollValidationError, preparePostBody } from "../../../lib/post-polls";
-import { hasRichMedia } from "../../../lib/rich-text";
+import { hasRichMedia, normalizeRichTitle } from "../../../lib/rich-text";
 import {
   finalizeBodyMedia,
   mediaLifecycleErrorStatus,
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   try {
     const payload = await request.json() as { category?: unknown; title?: unknown; titleColor?: unknown; authorName?: unknown; body?: unknown };
     const category = typeof payload.category === "string" ? payload.category : "";
-    const title = typeof payload.title === "string" ? payload.title.trim().replace(/\s+/g, " ") : "";
+    const { title, textLength: titleLength } = normalizeRichTitle(typeof payload.title === "string" ? payload.title : "");
     const titleColor = normalizeTitleColor(payload.titleColor);
     const authorName = typeof payload.authorName === "string" ? payload.authorName.trim().replace(/\s+/g, " ") : "";
     const bodyInput = typeof payload.body === "string" ? payload.body.replace(/\r\n/g, "\n") : "";
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const hasMedia = hasRichMedia(body);
     if (!ADMIN_CATEGORIES.includes(category as typeof ADMIN_CATEGORIES[number])) return Response.json({ error: "게시판 종류를 확인해 주세요." }, { status: 400 });
     if (titleColor === null) return Response.json({ error: "제목 색상을 확인해 주세요." }, { status: 400 });
-    if (title.length < 2 || title.length > 80) return Response.json({ error: "제목은 2–80자로 입력해 주세요." }, { status: 400 });
+    if (titleLength < 2 || titleLength > 80) return Response.json({ error: "제목은 2–80자로 입력해 주세요." }, { status: 400 });
     if ((textLength < 2 && !hasMedia && !poll) || textLength > 3000 || body.length > 20000) return Response.json({ error: "내용은 2–3,000자로 입력해 주세요." }, { status: 400 });
     if (authorName.length < 1 || authorName.length > 20) return Response.json({ error: "작성자는 1~20자로 입력해 주세요." }, { status: 400 });
     const actorKey = await mediaActorKey(request, env);
