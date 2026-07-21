@@ -66,10 +66,10 @@ button { color:inherit; }
 .point-shop-link:hover small { color:var(--sky); }
 .attendance-status { color:#777; font-size:14px!important; }
 .attendance-status.complete { color:#e44343; }
-.quick-trust { display:flex; align-items:center; gap:14px; padding:14px 20px; background:#0d0f12; color:#fff; }
+.quick-trust { display:flex; align-items:center; gap:14px; padding:14px 20px; background:linear-gradient(135deg,var(--sky) 0%,#78c6f6 100%); color:#fff; }
 .status-dot { width:9px; height:9px; background:#49da88; border-radius:50%; box-shadow:0 0 0 5px rgba(73,218,136,.12); }
 .quick-trust p { margin:0; display:flex; flex-direction:column; gap:4px; }
-.quick-trust small { color:#aeb0b4; }
+.quick-trust small { color:rgba(255,255,255,.86); }
 
 .content-section { padding-top:27px; }
 .home-overview+.content-section { padding-top:18px; }
