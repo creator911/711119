@@ -171,7 +171,9 @@
 .event-editor { align-self:start; }
 .admin-board-editor { align-self:start; }
 .admin-editor-fields { padding:18px; }
-.admin-editor-fields>label { display:block; margin-bottom:12px; color:#555b63; font-size:10px; font-weight:800; }
+.admin-editor-fields>label,.admin-editor-field { display:block; margin-bottom:12px; color:#555b63; font-size:10px; font-weight:800; }
+.admin-editor-field>span { display:block; margin-bottom:7px; }
+.admin-editor-field .rich-title-input { color:#111; font-size:11px; font-weight:400; }
 .admin-editor-fields input,.admin-editor-fields select { display:block; width:100%; height:38px; margin-top:7px; border:1px solid #bbb; border-radius:0; background:#fff; padding:0 10px; color:#111; font:11px inherit; outline:0; }
 .admin-editor-fields select { width:190px; }
 .admin-editor-fields .rich-editor { margin-top:12px; }

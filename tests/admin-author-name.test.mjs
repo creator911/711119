@@ -12,6 +12,8 @@ test("admin notice editor accepts and stores a custom author name", async () => 
   ]);
   assert.match(consoleSource, /name="authorName"/);
   assert.match(consoleSource, /authorName: String\(data\.get\("authorName"\)/);
+  assert.match(consoleSource, /className="admin-editor-field"/);
+  assert.doesNotMatch(consoleSource, /<label>\{mode === "events" \? "이벤트 제목"[\s\S]*?<RichTitleInput/);
   assert.match(noticeRoute, /author_name/);
   assert.match(eventRoute, /author_name/);
   assert.match(overviewRoute, /COALESCE\(NULLIF\(p\.author_name,''\),u\.nickname,'운영자'\) AS author/);

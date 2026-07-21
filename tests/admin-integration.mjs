@@ -41,23 +41,23 @@ assert.ok(Array.isArray(overviewData.blockedIps));
 const createEvent = await fetch(`${baseUrl}/api/admin/events`, {
   method: "POST",
   headers: { "Content-Type": "application/json", Cookie: cookie },
-  body: JSON.stringify({ category: "events", title: eventTitle, body: "관리자 페이지에서 작성한 이벤트 상세 내용입니다." }),
+  body: JSON.stringify({ category: "events", title: eventTitle, authorName: "이벤트운영팀", body: "관리자 페이지에서 작성한 이벤트 상세 내용입니다." }),
 });
 assert.equal(createEvent.status, 201, JSON.stringify(await createEvent.clone().json()));
 const createdEvent = await createEvent.json();
-assert.equal(createdEvent.post.author, "운영자");
+assert.equal(createdEvent.post.author, "이벤트운영팀");
 assert.equal(createdEvent.post.category, "events");
 
 const eventBoard = await fetch(`${baseUrl}/api/posts?category=events`);
 assert.equal(eventBoard.status, 200);
 const eventBoardData = await eventBoard.json();
-assert.ok(eventBoardData.posts.some((post) => post.id === createdEvent.post.id && post.title === eventTitle && post.author === "운영자"));
+assert.ok(eventBoardData.posts.some((post) => post.id === createdEvent.post.id && post.title === eventTitle && post.author === "이벤트운영팀"));
 
 const noticeTitle = `독립 공지 ${Date.now().toString(36)}`;
 const createNotice = await fetch(`${baseUrl}/api/admin/posts`, {
   method: "POST",
   headers: { "Content-Type": "application/json", Cookie: cookie },
-  body: JSON.stringify({ category: "notices", title: noticeTitle, body: "공지사항 대메뉴에 게시되는 관리자 공지입니다." }),
+  body: JSON.stringify({ category: "notices", title: noticeTitle, authorName: "공지운영팀", body: "공지사항 대메뉴에 게시되는 관리자 공지입니다." }),
 });
 assert.equal(createNotice.status, 201, JSON.stringify(await createNotice.clone().json()));
 const noticeData = await createNotice.json();
@@ -67,7 +67,7 @@ assert.equal(noticeBoard.status, 200);
 const noticeBoardData = await noticeBoard.json();
 assert.equal(noticeBoardData.posts[0].id, noticeData.post.id);
 assert.equal(noticeBoardData.posts[0].isNotice, 1);
-assert.equal(noticeBoardData.posts[0].author, "운영자");
+assert.equal(noticeBoardData.posts[0].author, "공지운영팀");
 
 for (const removedNoticeCategory of ["reviews", "gifs", "community"]) {
   const removedNotice = await fetch(`${baseUrl}/api/admin/posts`, {
@@ -80,7 +80,7 @@ for (const removedNoticeCategory of ["reviews", "gifs", "community"]) {
 
 const refreshedOverview = await fetch(`${baseUrl}/api/admin/overview`, { headers: { Cookie: cookie } });
 assert.equal(refreshedOverview.status, 200);
-assert.ok((await refreshedOverview.json()).posts.some((post) => post.id === createdEvent.post.id && post.author === "운영자"));
+assert.ok((await refreshedOverview.json()).posts.some((post) => post.id === createdEvent.post.id && post.author === "이벤트운영팀"));
 
 const block = await fetch(`${baseUrl}/api/admin/blocked-ips`, {
   method: "POST",

@@ -545,7 +545,7 @@ function AdminBoardEditor({ mode, submitting, onPublish }: { mode: "events" | "n
   return <form className="admin-panel admin-board-editor" onSubmit={submit}>
     <div className="panel-title"><div><h2>{mode === "events" ? "새 이벤트 작성" : "새 공지 작성"}</h2><p>{mode === "events" ? "등록 즉시 이벤트 게시판에 공개됩니다." : "선택한 게시판 상단에 공지로 고정됩니다."}</p></div></div>
     <div className="admin-editor-fields">
-      <label>{mode === "events" ? "이벤트 제목" : "공지 제목"}<RichTitleInput name="title" value={title} onChange={setTitle} placeholder="제목을 입력해 주세요." ariaLabel={mode === "events" ? "이벤트 제목" : "공지 제목"} /></label>
+      <div className="admin-editor-field"><span>{mode === "events" ? "이벤트 제목" : "공지 제목"}</span><RichTitleInput name="title" value={title} onChange={setTitle} placeholder="제목을 입력해 주세요." ariaLabel={mode === "events" ? "이벤트 제목" : "공지 제목"} /></div>
       <label>작성자<input name="authorName" required minLength={1} maxLength={20} defaultValue="운영팀" placeholder="예: 운영팀" /></label>
       <RichTextEditor name="body" value={body} onChange={setBody} onBusyChange={setEditorBusy} compact placeholder={mode === "events" ? "혜택, 기간, 참여 방법 등 자세한 내용을 입력하세요." : "공지 내용을 입력하세요."} />
       <div className="admin-editor-note"><span>개인정보 노출과 불법 정보가 포함되지 않았는지 확인해 주세요.</span><b>저장 전 자동 정리됩니다.</b></div>
