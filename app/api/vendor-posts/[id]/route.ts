@@ -35,6 +35,7 @@ const parseId = (request: Request) => {
 };
 const canManage = (viewer: MemberSession | null, post: Pick<StoredVendorPost, "authorId">, adminActor = false) =>
   adminActor || Boolean(viewer && (viewer.level === 10 || viewer.id === post.authorId));
+const isStandaloneAdminActor = (viewer: MemberSession | null, operator: unknown) => !viewer && Boolean(operator);
 const decorate = (post: StoredVendorPost, viewer: MemberSession | null, adminActor = false) => ({
   id: post.id,
   industry: post.industry,
@@ -68,7 +69,7 @@ export async function GET(request: Request) {
   try {
     const [post, viewer, operator] = await Promise.all([loadPost(id), memberFromSession(request), adminSession(request, env)]);
     if (!post) return Response.json({ error: "업체정보 글을 찾을 수 없습니다." }, { status: 404 });
-    return Response.json({ post: decorate(post, viewer, Boolean(operator)) });
+    return Response.json({ post: decorate(post, viewer, isStandaloneAdminActor(viewer, operator)) });
   } catch (error) {
     console.error("Vendor post detail load failed", error);
     return Response.json({ error: "업체정보 글을 불러오지 못했습니다." }, { status: 500 });
@@ -80,7 +81,7 @@ export async function PATCH(request: Request) {
   if (!id) return Response.json({ error: "업체정보 글 번호를 확인해 주세요." }, { status: 400 });
   const [viewer, operator] = await Promise.all([memberFromSession(request), adminSession(request, env)]);
   if (!viewer && !operator) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
-  const adminActor = Boolean(operator);
+  const adminActor = isStandaloneAdminActor(viewer, operator);
   let mediaClaim: MediaAttachmentClaim | null = null;
   let saveCommitted = false;
   try {
@@ -150,7 +151,7 @@ export async function DELETE(request: Request) {
   if (!id) return Response.json({ error: "업체정보 글 번호를 확인해 주세요." }, { status: 400 });
   const [viewer, operator] = await Promise.all([memberFromSession(request), adminSession(request, env)]);
   if (!viewer && !operator) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
-  const adminActor = Boolean(operator);
+  const adminActor = isStandaloneAdminActor(viewer, operator);
   try {
     const post = await loadPost(id);
     if (!post) return Response.json({ error: "업체정보 글을 찾을 수 없습니다." }, { status: 404 });

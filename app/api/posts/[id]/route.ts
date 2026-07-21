@@ -35,6 +35,7 @@ type StoredPost = {
 
 const canManagePost = (viewer: MemberSession | null, post: Pick<StoredPost, "authorId">, adminActor = false) =>
   adminActor || Boolean(viewer && (viewer.level === 10 || viewer.id === post.authorId));
+const isStandaloneAdminActor = (viewer: MemberSession | null, operator: unknown) => !viewer && Boolean(operator);
 
 async function publicPost(id: number, viewer: MemberSession | null, adminActor = false) {
   const post = await env.DB.prepare(`
@@ -63,8 +64,9 @@ export async function GET(request: Request) {
 
     await env.DB.prepare("UPDATE posts SET views=views+1 WHERE id=?").bind(id).run();
     const [viewer, operator] = await Promise.all([memberFromSession(request), adminSession(request, env)]);
+    const adminActor = isStandaloneAdminActor(viewer, operator);
     const [post, comments, poll] = await Promise.all([
-      publicPost(id, viewer, Boolean(operator)),
+      publicPost(id, viewer, adminActor),
       env.DB.prepare(`
         SELECT c.id,c.body,c.created_at AS createdAt,COALESCE(u.nickname,'탈퇴회원') AS author,COALESCE(u.level,0) AS authorLevel
         FROM post_comments c LEFT JOIN users u ON u.id=c.user_id
@@ -85,7 +87,7 @@ export async function PATCH(request: Request) {
   if (!id) return Response.json({ error: "게시글 번호를 확인해 주세요." }, { status: 400 });
   const [viewer, operator] = await Promise.all([memberFromSession(request), adminSession(request, env)]);
   if (!viewer && !operator) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
-  const adminActor = Boolean(operator);
+  const adminActor = isStandaloneAdminActor(viewer, operator);
   let mediaClaim: MediaAttachmentClaim | null = null;
   let saveCommitted = false;
 
@@ -178,7 +180,7 @@ export async function DELETE(request: Request) {
   if (!id) return Response.json({ error: "게시글 번호를 확인해 주세요." }, { status: 400 });
   const [viewer, operator] = await Promise.all([memberFromSession(request), adminSession(request, env)]);
   if (!viewer && !operator) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
-  const adminActor = Boolean(operator);
+  const adminActor = isStandaloneAdminActor(viewer, operator);
 
   try {
     const post = await env.DB.prepare("SELECT id,author_id AS authorId FROM posts WHERE id=? AND status='published'")

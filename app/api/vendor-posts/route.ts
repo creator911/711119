@@ -39,6 +39,7 @@ const decorate = (post: VendorPostRow, viewer: MemberSession | null, adminActor 
     isOwn: Boolean(viewer && viewer.id === post.authorId), canEdit: canManage, canDelete: canManage,
   };
 };
+const isStandaloneAdminActor = (viewer: MemberSession | null, operator: unknown) => !viewer && Boolean(operator);
 
 async function isActiveDirector(userId: number) {
   const row = await env.DB.prepare("SELECT is_director AS isDirector FROM users WHERE id=? AND status='active'").bind(userId).first<{ isDirector: number }>();
@@ -143,7 +144,8 @@ export async function GET(request: Request) {
     const jumpSummary = viewer && canWrite ? await loadJumpSummary(viewer.id, assignedRegions.length) : null;
     const page = rows.results.slice(0, 30);
     const nextCursor = rows.results.length > 30 ? cursor + page.length : null;
-    return Response.json({ posts: page.map((post) => decorate(post, viewer, Boolean(operator))), nextCursor, canWrite, assignedRegions, jumpSummary });
+    const adminActor = isStandaloneAdminActor(viewer, operator);
+    return Response.json({ posts: page.map((post) => decorate(post, viewer, adminActor)), nextCursor, canWrite, assignedRegions, jumpSummary });
   } catch (error) {
     console.error("Vendor post list load failed", error);
     return Response.json({ error: "업체정보 글을 불러오지 못했습니다." }, { status: 500 });
