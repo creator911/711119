@@ -11,8 +11,9 @@ test("출장나라 메인 화면과 배포 산출물을 구성한다", async () 
     readFile(new URL("../app/components/Portal.tsx", import.meta.url), "utf8"),
     access(new URL("../dist/server/index.js", import.meta.url)),
   ]);
-  assert.match(page, /title:\s*"검증된 출장 서비스"/);
-  assert.match(layout, /template:\s*"%s \| 출장나라"/);
+  assert.match(page, /title:\s*SITE_TITLE/);
+  assert.match(layout, /siteName:\s*SITE_NAME/);
+  assert.match(layout, /description:\s*SITE_DESCRIPTION/);
   assert.match(portal, /원하는 지역과 업체를/);
   assert.doesNotMatch(portal, /믿을 수 있는 선택|업체 둘러보기/);
   assert.match(portal, /추천 업체/);
@@ -28,7 +29,7 @@ test("완성된 사이트에서 임시 미리보기 자산을 제거했다", asy
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
   assert.match(page, /<Portal \/>/);
-  assert.match(layout, /출장나라/);
+  assert.match(layout, /site-metadata/);
   assert.doesNotMatch(page + layout + packageJson, /codex-preview|react-loading-skeleton|SkeletonPreview/);
   await assert.rejects(access(new URL("../app/_sites-preview", projectRoot)));
 });
