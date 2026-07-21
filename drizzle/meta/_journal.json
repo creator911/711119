@@ -218,6 +218,13 @@
       "when": 1784640000000,
       "tag": "0030_member_level_lock",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1784665354138,
+      "tag": "0031_slippery_ken_ellis",
+      "breakpoints": true
     }
   ]
 }

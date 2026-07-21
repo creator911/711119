@@ -46,8 +46,8 @@ test("운영 콘솔에서 공용 메인페이지 도메인을 관리한다", asy
     readFile(new URL("../app/admin/styles.css", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0025_black_vampiro.sql", import.meta.url), "utf8"),
   ]);
-  assert.match(admin, /<span>05<\/span>포인트 지급/);
-  assert.match(admin, /<span>12<\/span>메인페이지 도메인/);
+  assert.match(admin, /<span>06<\/span>포인트 지급/);
+  assert.match(admin, /<span>13<\/span>메인페이지 도메인/);
   assert.match(admin, /fetch\("\/api\/admin\/main-domain"/);
   assert.match(admin, /모든 기기에 동일하게 적용됩니다/);
   assert.match(route, /ON CONFLICT\(key\) DO UPDATE/);

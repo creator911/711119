@@ -381,3 +381,31 @@ export const siteSettings = sqliteTable("site_settings", {
   updatedBy: text("updated_by").notNull().default("system"),
   updatedAt: text("updated_at").notNull(),
 });
+
+export const systemAnnouncements = sqliteTable("system_announcements", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  content: text("content").notNull(),
+  requiresConfirmation: integer("requires_confirmation", { mode: "boolean" }).notNull().default(false),
+  startsAt: text("starts_at").notNull(),
+  endsAt: text("ends_at").notNull(),
+  status: text("status").notNull().default("active"),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  check("system_announcements_confirmation_check", sql`${table.requiresConfirmation} IN (0,1)`),
+  check("system_announcements_status_check", sql`${table.status} IN ('active','cancelled')`),
+  check("system_announcements_window_check", sql`${table.startsAt} < ${table.endsAt}`),
+  index("system_announcements_active_window_idx").on(table.status, table.startsAt, table.endsAt, table.id),
+]);
+
+export const systemAnnouncementReceipts = sqliteTable("system_announcement_receipts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  announcementId: integer("announcement_id").notNull().references(() => systemAnnouncements.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  deliveredAt: text("delivered_at").notNull(),
+  acknowledgedAt: text("acknowledged_at"),
+}, (table) => [
+  uniqueIndex("system_announcement_receipts_announcement_user_unique").on(table.announcementId, table.userId),
+  index("system_announcement_receipts_user_ack_idx").on(table.userId, table.acknowledgedAt, table.announcementId),
+]);

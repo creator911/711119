@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { SITE_DESCRIPTION, SITE_NAME, SITE_TITLE } from "./lib/site-metadata";
+import GlobalAnnouncement from "./components/GlobalAnnouncement";
 import "./globals.css";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -20,5 +21,5 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="ko"><body>{children}</body></html>;
+  return <html lang="ko"><body>{children}<GlobalAnnouncement /></body></html>;
 }

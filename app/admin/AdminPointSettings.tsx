@@ -14,20 +14,22 @@ export default function AdminPointSettings() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    void fetch("/api/admin/point-settings", { cache: "no-store" })
-      .then(async (response) => {
-        const result = await response.json() as { settings?: PointSystemSettings; error?: string };
-        if (!response.ok || !result.settings) throw new Error(result.error ?? "포인트 설정을 불러오지 못했습니다.");
-        if (!cancelled) setSettings(result.settings);
-      })
-      .catch((error) => {
-        if (!cancelled) setMessage(error instanceof Error ? error.message : "포인트 설정을 불러오지 못했습니다.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      void fetch("/api/admin/point-settings", { cache: "no-store" })
+        .then(async (response) => {
+          const result = await response.json() as { settings?: PointSystemSettings; error?: string };
+          if (!response.ok || !result.settings) throw new Error(result.error ?? "포인트 설정을 불러오지 못했습니다.");
+          if (!cancelled) setSettings(result.settings);
+        })
+        .catch((error) => {
+          if (!cancelled) setMessage(error instanceof Error ? error.message : "포인트 설정을 불러오지 못했습니다.");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, []);
 
   const update = (changes: Partial<PointSystemSettings>) => setSettings((current) => ({ ...current, ...changes }));

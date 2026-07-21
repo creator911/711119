@@ -177,6 +177,7 @@ export default function Portal() {
         setPoints(result.user?.points ?? 0);
         setAttended(result.user?.attended ?? false);
         setViewer(result.user ?? null);
+        window.dispatchEvent(new CustomEvent("cn:member-session", { detail: { authenticated: Boolean(result.user) } }));
       })
       .catch(() => { setPoints(0); setAttended(false); setViewer(null); });
   }, []);
@@ -393,6 +394,7 @@ export default function Portal() {
       } else {
         const nextViewer = result.user ?? { nickname: "회원", points: 0, level: 1, attended: false };
         setViewer(nextViewer);
+        window.dispatchEvent(new CustomEvent("cn:member-session", { detail: { authenticated: true } }));
         setPoints(nextViewer.points);
         setAttended(nextViewer.attended);
         showToast(`${nextViewer.nickname}님, 반가워요!`);
@@ -408,6 +410,7 @@ export default function Portal() {
   const logout = async () => {
     try { await fetch("/api/auth/logout", { method: "POST" }); } finally {
       setViewer(null);
+      window.dispatchEvent(new CustomEvent("cn:member-session", { detail: { authenticated: false } }));
       setPoints(0);
       setAttended(false);
       setMyPage(null);

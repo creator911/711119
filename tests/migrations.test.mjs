@@ -5,8 +5,8 @@ import test from "node:test";
 
 test("모든 Drizzle 마이그레이션이 신규 DB에 순서대로 적용된다", async () => {
   const journal = JSON.parse(await readFile(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"));
-  assert.deepEqual(journal.entries.map((entry) => entry.idx), Array.from({ length: 31 }, (_, index) => index));
-  assert.equal(journal.entries.at(-1)?.tag, "0030_member_level_lock");
+  assert.deepEqual(journal.entries.map((entry) => entry.idx), Array.from({ length: 32 }, (_, index) => index));
+  assert.equal(journal.entries.at(-1)?.tag, "0031_slippery_ken_ellis");
 
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys=ON");
@@ -31,7 +31,7 @@ test("모든 Drizzle 마이그레이션이 신규 DB에 순서대로 적용된�
   const expectedTodayTables = [
     "admin_account_login_failures", "admin_ip_login_failures", "admin_owners",
     "director_regions", "featured_vendor_permissions", "featured_vendor_posts",
-    "post_poll_options", "post_poll_votes", "post_polls", "shop_products", "shop_purchases", "shop_vouchers", "site_settings", "upload_usage", "uploaded_media", "uploaded_media_references", "vendor_post_jump_usage", "vendor_posts",
+    "post_poll_options", "post_poll_votes", "post_polls", "shop_products", "shop_purchases", "shop_vouchers", "site_settings", "system_announcement_receipts", "system_announcements", "upload_usage", "uploaded_media", "uploaded_media_references", "vendor_post_jump_usage", "vendor_posts",
   ];
   for (const table of expectedTodayTables) assert.ok(actualTables.includes(table), `${table} table is missing`);
 
