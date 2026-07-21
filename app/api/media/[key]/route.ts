@@ -9,8 +9,7 @@ type MediaBucket = {
 
 const keyOf = (context: { params: Promise<{ key: string }> }) => context.params.then(({ key }) => key);
 
-export async function GET(request: Request, context: { params: Promise<{ key: string }> }) {
-  const key = await keyOf(context);
+export async function serveMediaObject(request: Request, key: string) {
   if (!/^[0-9a-f-]{36}\.(?:jpg|png|gif|webp|avif|bmp|mp4|webm|ogv|mov)$/i.test(key)) return new Response("Not found", { status: 404 });
   const bucket = (env as unknown as { MEDIA: MediaBucket }).MEDIA;
   if (!bucket) return new Response("Storage unavailable", { status: 503 });
@@ -43,4 +42,20 @@ export async function GET(request: Request, context: { params: Promise<{ key: st
   if (!object) return new Response("Not found", { status: 404 });
   headers.set("Content-Length", String(head.size));
   return new Response(object.body, { headers });
+}
+
+export async function GET(request: Request, context: { params: Promise<{ key: string }> }) {
+  const key = await keyOf(context);
+  if (!/^[0-9a-f-]{36}\.(?:jpg|png|gif|webp|avif|bmp|mp4|webm|ogv|mov)$/i.test(key)) return new Response("Not found", { status: 404 });
+  const privateSupportOnly = await env.DB.prepare(`
+    SELECT 1 FROM uploaded_media_references r
+    WHERE r.media_key=? AND r.resource_type='support'
+      AND NOT EXISTS(
+        SELECT 1 FROM uploaded_media_references public_ref
+        WHERE public_ref.media_key=r.media_key AND public_ref.resource_type!='support'
+      )
+    LIMIT 1
+  `).bind(key.toLowerCase()).first();
+  if (privateSupportOnly) return new Response("Not found", { status: 404 });
+  return serveMediaObject(request, key);
 }

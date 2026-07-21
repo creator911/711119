@@ -35,9 +35,13 @@ export async function POST(request: Request) {
   let rollbackQuota = false;
   let pendingKey = "";
   let bucket: MediaBucket | null = null;
+  const preferAdmin = request.headers.get("x-upload-context") === "admin";
+  const preferredOperator = preferAdmin ? await adminSession(request, env) : null;
   let member = null;
-  try { member = await memberFromSession(request); } catch { /* 관리자 쿠키 확인을 계속합니다. */ }
-  const operator = member ? null : await adminSession(request, env);
+  if (!preferredOperator) {
+    try { member = await memberFromSession(request); } catch { /* 관리자 쿠키 확인을 계속합니다. */ }
+  }
+  const operator = preferredOperator ?? (member ? null : await adminSession(request, env));
   if (!member && !operator) return Response.json({ error: "로그인 후 파일을 첨부할 수 있습니다." }, { status: 401 });
   try {
     const form = await request.formData();

@@ -66,7 +66,7 @@ export const adminMediaActorKey = (role: string, username: string) => `admin:${r
 export function bodyMediaKeys(normalizedBody: string) {
   const keys = new Set<string>();
   for (const tag of normalizedBody.matchAll(/<(?:img|video)\b[^>]*>/gi)) {
-    const source = tag[0].match(/\bsrc\s*=\s*["']\/api\/media\/([0-9a-f-]{36}\.[a-z0-9]+)["']/i)?.[1];
+    const source = tag[0].match(/\bsrc\s*=\s*["']\/api\/(?:support\/)?media\/([0-9a-f-]{36}\.[a-z0-9]+)["']/i)?.[1];
     if (source) keys.add(source.toLowerCase());
   }
   return [...keys];
@@ -236,6 +236,35 @@ export async function finalizeBodyMedia(
   await database.batch(bodyMediaFinalizeStatements(database, claim, resourceType, resourceId, expectedBody, attachedAt, expectedFeaturedState));
 }
 
+export function supportReplyMediaFinalizeStatements(
+  database: MediaDatabase,
+  claim: MediaAttachmentClaim,
+  inquiryId: number,
+  replyId: number,
+  expectedBody: string,
+  attachedAt = new Date().toISOString(),
+) {
+  const guard = `EXISTS(
+    SELECT 1 FROM support_inquiry_replies r
+    JOIN support_inquiries i ON i.id=r.inquiry_id
+    WHERE r.id=CAST(? AS INTEGER) AND r.inquiry_id=CAST(? AS INTEGER) AND r.body=? AND i.status!='deleted'
+  )`;
+  const guardValues = [String(replyId), String(inquiryId), expectedBody];
+  return [
+    ...claim.trackedKeys.map((key) => database.prepare(`
+      INSERT OR IGNORE INTO uploaded_media_references(media_key,resource_type,resource_id,created_at)
+      SELECT key,'support',?,? FROM uploaded_media
+      WHERE key=? AND status IN ('attaching','attached') AND ${guard}
+    `).bind(String(inquiryId), attachedAt, key, ...guardValues)),
+    database.prepare(`
+      UPDATE uploaded_media
+      SET status='attached',attached_at=?,claim_token=NULL,claimed_at=NULL
+      WHERE claim_token=? AND status='attaching' AND ${guard}
+    `).bind(attachedAt, claim.token, ...guardValues),
+    orphanedAttachedStatement(database, attachedAt),
+  ];
+}
+
 export async function rollbackBodyMedia(database: MediaDatabase, claim: MediaAttachmentClaim) {
   await rollbackClaimRows(database, claim.token, claim.keys, claim.attachedKeys);
 }
@@ -285,6 +314,7 @@ export async function releaseBodyMediaReferences(
 
 async function recoverStaleAttachment(database: MediaDatabase, key: string, cutoff: string, recoveredAt: string) {
   const mediaUrl = `/api/media/${key}`;
+  const supportMediaUrl = `/api/support/media/${key}`;
   const resources = await database.prepare(`
     SELECT 'post' AS resourceType,CAST(id AS TEXT) AS resourceId FROM posts
       WHERE status='published' AND instr(body,?)>0
@@ -292,19 +322,31 @@ async function recoverStaleAttachment(database: MediaDatabase, key: string, cuto
     SELECT 'vendor',CAST(id AS TEXT) FROM vendor_posts
       WHERE status='published' AND instr(body,?)>0
     UNION ALL
-    SELECT 'support',CAST(id AS TEXT) FROM support_inquiries
-      WHERE status!='deleted' AND instr(body,?)>0
+    SELECT 'support',CAST(i.id AS TEXT) FROM support_inquiries i
+      WHERE i.status!='deleted' AND (
+        instr(i.body,?)>0 OR EXISTS(
+          SELECT 1 FROM support_inquiry_replies sr
+          WHERE sr.inquiry_id=i.id AND (instr(sr.body,?)>0 OR instr(sr.body,?)>0)
+        )
+      )
     UNION ALL
     SELECT 'featured',CAST(slot AS TEXT) FROM featured_vendor_posts
       WHERE instr(body,?)>0 OR cover_key=?
-  `).bind(mediaUrl, mediaUrl, mediaUrl, mediaUrl, key).all<{ resourceType: MediaResourceType; resourceId: string }>();
+  `).bind(mediaUrl, mediaUrl, mediaUrl, mediaUrl, supportMediaUrl, mediaUrl, key).all<{ resourceType: MediaResourceType; resourceId: string }>();
 
   if (resources.results.length) {
     const results = await database.batch([
       ...resources.results.map(({ resourceType, resourceId }) => {
         const resource = mediaResources[resourceType];
-        const mediaGuard = resourceType === "featured" ? "(instr(body,?)>0 OR cover_key=?)" : "instr(body,?)>0";
-        const mediaGuardValues = resourceType === "featured" ? [mediaUrl, key] : [mediaUrl];
+        const mediaGuard = resourceType === "featured"
+          ? "(instr(body,?)>0 OR cover_key=?)"
+          : resourceType === "support"
+            ? `(instr(body,?)>0 OR EXISTS(
+                SELECT 1 FROM support_inquiry_replies sr
+                WHERE sr.inquiry_id=support_inquiries.id AND (instr(sr.body,?)>0 OR instr(sr.body,?)>0)
+              ))`
+            : "instr(body,?)>0";
+        const mediaGuardValues = resourceType === "featured" ? [mediaUrl, key] : resourceType === "support" ? [mediaUrl, mediaUrl, supportMediaUrl] : [mediaUrl];
         return database.prepare(`
         INSERT OR IGNORE INTO uploaded_media_references(media_key,resource_type,resource_id,created_at)
         SELECT key,?,?,? FROM uploaded_media

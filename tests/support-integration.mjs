@@ -10,6 +10,42 @@ const username = `help${unique}`.slice(0, 20);
 const nickname = `문의${unique}`.slice(0, 12);
 const password = "SafePass!2026";
 const ip = `203.0.113.${20 + (Date.now() % 180)}`;
+const imageBytes = Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64");
+
+async function uploadImage(cookie, extraHeaders = {}) {
+  const form = new FormData();
+  form.append("file", new Blob([imageBytes], { type: "image/gif" }), `support-${unique}.gif`);
+  const response = await fetch(`${baseUrl}/api/uploads`, {
+    method: "POST",
+    headers: { Cookie: cookie, ...extraHeaders },
+    body: form,
+  });
+  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  const result = await response.json();
+  assert.match(result.url, /^\/api\/media\/[0-9a-f-]{36}\.gif$/);
+  return result.url;
+}
+
+async function createMember(suffix, forwardedIp) {
+  const captchaResponse = await fetch(`${baseUrl}/api/captcha?t=${Date.now()}-${suffix}`);
+  const captchaCookie = captchaResponse.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
+  const captchaSvg = await captchaResponse.text();
+  const captchaAnswer = [...captchaSvg.matchAll(/<text[^>]*>(\d)<\/text>/g)].map((match) => match[1]).join("");
+  const otherUsername = `other${suffix}`.slice(0, 20);
+  const register = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: captchaCookie, "X-Forwarded-For": forwardedIp },
+    body: JSON.stringify({ username: otherUsername, nickname: `타인${suffix}`.slice(0, 12), password, passwordConfirm: password, captchaAnswer }),
+  });
+  assert.equal(register.status, 201, JSON.stringify(await register.clone().json()));
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Forwarded-For": forwardedIp },
+    body: JSON.stringify({ username: otherUsername, password }),
+  });
+  assert.equal(login.status, 200);
+  return login.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
+}
 
 const anonymous = await fetch(`${baseUrl}/api/support`);
 assert.equal(anonymous.status, 200);
@@ -80,6 +116,21 @@ const memberReply = await fetch(`${baseUrl}/api/support/${created.id}`, {
 assert.equal(memberReply.status, 201);
 assert.equal((await memberReply.json()).senderType, "member");
 
+const memberImagePublicUrl = await uploadImage(memberCookie);
+const memberImageProtectedUrl = memberImagePublicUrl.replace("/api/media/", "/api/support/media/");
+const memberImageReply = await fetch(`${baseUrl}/api/support/${created.id}`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Cookie: memberCookie },
+  body: JSON.stringify({ body: `<p>회원 첨부 이미지</p><p class="editor-media-block"><img src="${memberImageProtectedUrl}" alt="첨부 이미지" /></p>` }),
+});
+assert.equal(memberImageReply.status, 201, JSON.stringify(await memberImageReply.clone().json()));
+assert.match((await memberImageReply.json()).body, /\/api\/support\/media\//);
+assert.equal((await fetch(`${baseUrl}${memberImageProtectedUrl}`, { headers: { Cookie: memberCookie } })).status, 200);
+assert.equal((await fetch(`${baseUrl}${memberImageProtectedUrl}`)).status, 404);
+assert.equal((await fetch(`${baseUrl}${memberImagePublicUrl}`, { headers: { Cookie: memberCookie } })).status, 404);
+const otherMemberCookie = await createMember(`${unique}x`, `198.51.100.${20 + (Date.now() % 180)}`);
+assert.equal((await fetch(`${baseUrl}${memberImageProtectedUrl}`, { headers: { Cookie: otherMemberCookie } })).status, 404);
+
 const adminLogin = await fetch(`${baseUrl}/api/admin/login`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -94,13 +145,25 @@ const inquiries = (await adminListResponse.json()).inquiries;
 const adminInquiry = inquiries.find((item) => item.id === created.id && item.username === username);
 assert.ok(adminInquiry);
 assert.equal(adminInquiry.title, title);
-assert.equal(adminInquiry.staffUnread, 2);
+assert.equal(adminInquiry.staffUnread, 3);
 
 const adminDetailResponse = await fetch(`${baseUrl}/api/admin/support/${created.id}`, { headers: { Cookie: adminCookie } });
 assert.equal(adminDetailResponse.status, 200);
 const adminDetail = await adminDetailResponse.json();
 assert.equal(adminDetail.inquiry.title, title);
 assert.ok(adminDetail.replies.some((reply) => reply.body === memberReplyText));
+
+const adminImagePublicUrl = await uploadImage(`${memberCookie}; ${adminCookie}`, { "X-Upload-Context": "admin" });
+const adminImageProtectedUrl = adminImagePublicUrl.replace("/api/media/", "/api/support/media/");
+const adminImageReply = await fetch(`${baseUrl}/api/admin/support/${created.id}`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Cookie: adminCookie },
+  body: JSON.stringify({ body: `<p>관리자 첨부 이미지</p><p class="editor-media-block"><img src="${adminImageProtectedUrl}" alt="첨부 이미지" /></p>` }),
+});
+assert.equal(adminImageReply.status, 201, JSON.stringify(await adminImageReply.clone().json()));
+assert.equal((await fetch(`${baseUrl}${adminImageProtectedUrl}`, { headers: { Cookie: memberCookie } })).status, 200);
+assert.equal((await fetch(`${baseUrl}${adminImageProtectedUrl}`, { headers: { Cookie: adminCookie } })).status, 200);
+assert.equal((await fetch(`${baseUrl}${adminImagePublicUrl}`)).status, 404);
 
 const staffText = `답변 확인했습니다 ${unique}`;
 const staffReply = await fetch(`${baseUrl}/api/admin/support/${created.id}`, {
@@ -125,4 +188,4 @@ const close = await fetch(`${baseUrl}/api/admin/support/${created.id}`, {
 assert.equal(close.status, 200);
 assert.equal((await close.json()).status, "closed");
 
-console.log("고객센터 검증 통과: 1:1문의 작성, 회원 추가 댓글, 관리자 목록·상세·답변·종료, 회원 답변 확인");
+console.log("고객센터 검증 통과: 회원·관리자 사진 답글, 소유자 권한 격리, 공개 경로 차단, 일반 답변·종료");

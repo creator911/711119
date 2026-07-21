@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { memberFromSession } from "../../lib/member-auth";
-import { hasRichMedia, normalizeRichBody } from "../../lib/rich-text";
+import { hasRichMedia, normalizeRichBody, protectSupportMediaUrls } from "../../lib/rich-text";
 import {
   finalizeBodyMedia,
   mediaLifecycleErrorStatus,
@@ -26,7 +26,8 @@ export async function GET(request: Request) {
       WHERE i.user_id=? AND i.kind=? AND i.status != 'deleted'
       ORDER BY i.id DESC LIMIT 100
     `).bind(user.id, kind).all();
-    return Response.json({ user: { nickname: user.nickname }, inquiries: inquiries.results });
+    const safeInquiries = inquiries.results.map((inquiry) => ({ ...inquiry, body: protectSupportMediaUrls(String((inquiry as { body?: unknown }).body ?? "")) }));
+    return Response.json({ user: { nickname: user.nickname }, inquiries: safeInquiries });
   } catch (error) {
     console.error("Support inquiries load failed", error);
     return Response.json({ error: "문의 목록을 불러오지 못했습니다." }, { status: 500 });
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
     await finalizeBodyMedia(env.DB, mediaClaim, "support", createdInquiryId, body, now);
     saveCommitted = true;
     return Response.json({
-      inquiry: { id: createdInquiryId, title, body, status: "open", memberUnread: 0, author: user.nickname, replyCount: 0, createdAt: now, updatedAt: now },
+      inquiry: { id: createdInquiryId, title, body: protectSupportMediaUrls(body), status: "open", memberUnread: 0, author: user.nickname, replyCount: 0, createdAt: now, updatedAt: now },
     }, { status: 201 });
   } catch (error) {
     if (!saveCommitted && createdInquiryId) {

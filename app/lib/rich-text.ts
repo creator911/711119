@@ -18,6 +18,7 @@ const safeUrl = (value: string) => {
 const safeMediaUrl = (value: string) => {
   const trimmed = value.trim();
   if (/^\/api\/media\/[0-9a-f-]{36}\.[a-z0-9]+$/i.test(trimmed)) return trimmed;
+  if (/^\/api\/support\/media\/[0-9a-f-]{36}\.[a-z0-9]+$/i.test(trimmed)) return trimmed;
   if (/^\/api\/shop\/vouchers\/\d+\/image$/i.test(trimmed)) return trimmed;
   return "";
 };
@@ -131,6 +132,10 @@ export function normalizeRichBody(input: string) {
 
 export function renderRichBody(input: string) {
   return /<\/?[a-z][\s\S]*>/i.test(input) ? sanitizeRichHtml(input) : escapeText(input).replace(/\n/g, "<br />");
+}
+
+export function protectSupportMediaUrls(input: string) {
+  return input.replace(/\/api\/media\/([0-9a-f-]{36}\.[a-z0-9]+)/gi, "/api/support/media/$1");
 }
 
 const titleAllowedTags = new Set(["span", "font", "b", "strong", "i", "em", "u", "s", "strike"]);

@@ -425,14 +425,13 @@
 .inquiry-admin-replies b { color:#17191c; }
 .inquiry-admin-replies .staff b { color:#ff554c; }
 .inquiry-admin-replies p { margin:0; color:#424850; white-space:pre-wrap; line-height:1.6; }
+.inquiry-admin-replies .support-reply-body { min-width:0; padding:0; color:#424850; font-size:10px; line-height:1.6; }
+.inquiry-admin-replies .support-reply-body img { max-width:min(100%,400px); max-height:360px; }
 .inquiry-admin-replies time { color:#9aa0a8; text-align:right; font-size:8px; }
-.inquiry-admin-reply { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; margin-top:12px; }
-.inquiry-admin-reply textarea { min-height:74px; border:1px solid #dfe2e5; border-radius:7px; background:#fff; padding:11px; resize:vertical; outline:0; font:11px/1.55 inherit; }
-.inquiry-admin-reply textarea:focus { border-color:#7d828a; }
-.inquiry-admin-reply>div { display:flex; flex-direction:column; gap:7px; }
-.inquiry-admin-reply button { min-width:88px; height:34px; border:1px solid #dfe1e4; border-radius:5px; background:#fff; color:#515862; font-size:10px; font-weight:800; cursor:pointer; }
-.inquiry-admin-reply button[type="submit"] { border-color:#111318; background:#111318; color:#fff; }
-.inquiry-admin-reply button:disabled { opacity:.5; cursor:default; }
+.inquiry-admin .support-reply-composer { margin-top:12px; border-color:#dfe2e5; border-radius:7px; }
+.inquiry-admin .support-reply-composer textarea { min-height:74px; font-size:11px; }
+.inquiry-admin .support-reply-toolbar { padding:8px 10px; }
+.inquiry-admin .support-reply-actions button[type="submit"] { border-color:#111318; background:#111318; color:#fff; }
 @media(max-width:1120px) {
   .admin-security,.event-admin-grid { grid-template-columns:1fr; }
   .shop-product-editor { grid-template-columns:1fr; }
@@ -526,9 +525,7 @@
   .inquiry-admin-detail { min-width:0; padding:14px 12px 17px; }
   .inquiry-admin-replies>div { grid-template-columns:minmax(0,1fr) auto; }
   .inquiry-admin-replies p { grid-column:1 / -1; }
-  .inquiry-admin-reply { grid-template-columns:1fr; }
-  .inquiry-admin-reply>div { flex-direction:row; }
-  .inquiry-admin-reply button { min-height:40px; flex:1; }
+  .inquiry-admin-replies .support-reply-body { grid-column:1 / -1; }
   .director-region-summary { grid-template-columns:1fr 1fr; gap:7px; padding:12px 14px; }
   .director-region-summary>em { justify-self:start; }
   .director-region-editor { padding:14px; }

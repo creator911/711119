@@ -19,7 +19,7 @@ type PollBuilder = { question: string; options: string[] };
 const escapeAttr = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const textLength = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim().length;
 const TABLE_PICKER_SIZE = 8;
-const IMAGE_UPLOAD_LIMIT = 12 * 1024 * 1024;
+export const IMAGE_UPLOAD_LIMIT = 12 * 1024 * 1024;
 const VIDEO_UPLOAD_LIMIT = 50 * 1024 * 1024;
 const VIDEO_OPTIMIZE_THRESHOLD = 18 * 1024 * 1024;
 
@@ -45,7 +45,7 @@ const youtubeVideoId = (input: string) => {
   } catch { return ""; }
 };
 
-async function optimizeImageFile(file: File) {
+export async function optimizeImageFile(file: File) {
   if (file.type === "image/gif" || file.type === "image/webp") return file;
   if (!/^image\/(?:jpeg|png|avif|bmp)$/i.test(file.type)) return file;
   try {

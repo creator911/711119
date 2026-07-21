@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import SupportReplyComposer from "../components/SupportReplyComposer";
 import { renderRichBody } from "../lib/rich-text";
 
 type Inquiry = {
@@ -39,7 +40,6 @@ export default function AdminSupport({ kind, onChanged }: { kind: InquiryKind; o
   const [selectedInquiry, setSelectedInquiry] = useState<Inquiry | null>(null);
   const [replies, setReplies] = useState<Reply[]>([]);
   const [query, setQuery] = useState("");
-  const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
@@ -91,10 +91,8 @@ export default function AdminSupport({ kind, onChanged }: { kind: InquiryKind; o
     return keyword ? inquiries.filter((item) => `${item.title} ${item.username} ${item.nickname}`.toLowerCase().includes(keyword)) : inquiries;
   }, [inquiries, query]);
 
-  const sendReply = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const body = draft.trim();
-    if (!selectedId || !body || sending) return;
+  const sendReply = async (body: string): Promise<boolean> => {
+    if (!selectedId || !body.trim() || sending) return false;
     setSending(true);
     try {
       const response = await fetch(`/api/admin/support/${selectedId}?kind=${kind}`, {
@@ -104,13 +102,14 @@ export default function AdminSupport({ kind, onChanged }: { kind: InquiryKind; o
       });
       const result = await response.json() as Reply & { error?: string };
       if (!response.ok) throw new Error(result.error ?? "답변을 저장하지 못했습니다.");
-      setDraft("");
       setReplies((current) => [...current, result]);
       setSelectedInquiry((current) => current ? { ...current, status: "answered", replyCount: current.replyCount + 1, updatedAt: result.createdAt } : current);
       await loadInquiries(true);
       onChanged();
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "답변을 저장하지 못했습니다.");
+      return false;
     } finally {
       setSending(false);
     }
@@ -152,10 +151,18 @@ export default function AdminSupport({ kind, onChanged }: { kind: InquiryKind; o
         {selectedId === inquiry.id && selectedInquiry && <div className="inquiry-admin-detail">
           <div className="inquiry-admin-body"><strong>{selectedInquiry.title}</strong><div className="rich-body" dangerouslySetInnerHTML={{ __html: renderRichBody(selectedInquiry.body ?? "") }} /></div>
           <div className="inquiry-admin-replies">
-            {replies.map((reply) => <div className={reply.senderType} key={reply.id}><b>{reply.senderType === "staff" ? "운영자" : selectedInquiry.nickname}</b><p>{reply.body}</p><time>{stamp(reply.createdAt)}</time></div>)}
+            {replies.map((reply) => <div className={reply.senderType} key={reply.id}><b>{reply.senderType === "staff" ? "운영자" : selectedInquiry.nickname}</b><div className="rich-body support-reply-body" dangerouslySetInnerHTML={{ __html: renderRichBody(reply.body) }} /><time>{stamp(reply.createdAt)}</time></div>)}
             {!replies.length && <p className="admin-empty">아직 등록된 답변이 없습니다.</p>}
           </div>
-          <form className="inquiry-admin-reply" onSubmit={sendReply}><textarea value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={1000} placeholder="답변 댓글을 입력하세요." /><div><button type="button" onClick={() => void changeStatus(selectedInquiry.status === "closed" ? "open" : "closed")}>{selectedInquiry.status === "closed" ? "다시 열기" : "종료"}</button><button type="submit" disabled={sending || !draft.trim()}>{sending ? "저장 중…" : "댓글 등록"}</button></div></form>
+          <SupportReplyComposer
+            key={selectedInquiry.id}
+            variant="admin"
+            submitting={sending}
+            onSend={sendReply}
+            placeholder="답변 댓글을 입력하세요."
+            submitLabel="댓글 등록"
+            secondaryAction={<button type="button" onClick={() => void changeStatus(selectedInquiry.status === "closed" ? "open" : "closed")}>{selectedInquiry.status === "closed" ? "다시 열기" : "종료"}</button>}
+          />
         </div>}
       </article>) : <p className="admin-empty">아직 접수된 문의가 없습니다.</p>}
       {error && <p className="support-admin-error">{error}</p>}

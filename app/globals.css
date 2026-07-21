@@ -377,6 +377,29 @@ button { color:inherit; }
 .support-detail .forum-detail-body { min-height:170px; padding-bottom:40px; }
 .support-reply.staff { background:#fcfcfc; }
 .support-reply.staff>b { color:#111; }
+.support-reply-body { min-width:0; padding:0 10px; color:#222; line-height:1.6; }
+.support-reply-body p { margin:0 0 7px; }
+.support-reply-body p:last-child { margin-bottom:0; }
+.support-reply-body img { display:block; width:auto; max-width:min(100%,460px); max-height:460px; margin:8px 0; border:1px solid #e3e3e3; border-radius:5px; object-fit:contain; }
+.support-reply-composer { position:relative; margin-top:14px; border:1px solid #c8c8c8; border-radius:6px; background:#fff; overflow:hidden; }
+.support-reply-composer textarea { display:block; width:100%; min-height:92px; border:0; padding:13px 14px 10px; resize:vertical; outline:0; color:#171717; background:#fff; font:12px/1.65 inherit; }
+.support-reply-composer textarea:focus { box-shadow:inset 0 0 0 1px #111; }
+.support-reply-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:1px solid #eee; padding:8px 10px; }
+.support-reply-attach,.support-reply-actions { display:flex; align-items:center; gap:8px; }
+.support-reply-attach input { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+.support-reply-attach button,.support-reply-actions button { min-width:76px; height:33px; border:1px solid #bfc3c7; border-radius:4px; background:#fff; color:#24272b; padding:0 11px; font-size:11px; font-weight:800; cursor:pointer; }
+.support-reply-attach button:hover { border-color:#111; }
+.support-reply-attach small { color:#888; font-size:10px; }
+.support-reply-actions button[type="submit"] { border-color:#111; background:#111; color:#fff; }
+.support-reply-composer button:disabled { cursor:not-allowed; opacity:.48; }
+.support-reply-meta { min-height:26px; display:flex; justify-content:space-between; gap:12px; padding:0 11px 7px; color:#999; font-size:10px; }
+.support-reply-meta em { overflow:hidden; color:#555; font-style:normal; text-align:right; text-overflow:ellipsis; white-space:nowrap; }
+.support-reply-previews { display:grid; grid-template-columns:repeat(4,82px); gap:8px; border-bottom:1px solid #eee; padding:10px; }
+.support-reply-previews figure { position:relative; width:82px; height:66px; margin:0; border:1px solid #ddd; border-radius:5px; background:#f5f5f5; overflow:hidden; }
+.support-reply-previews img { width:100%; height:100%; object-fit:cover; }
+.support-reply-previews button { position:absolute; top:3px; right:3px; width:22px; height:22px; border:0; border-radius:50%; background:rgba(0,0,0,.78); color:#fff; padding:0; font-size:16px; line-height:20px; cursor:pointer; }
+.support-reply-dropzone { position:absolute; z-index:4; inset:0; display:grid; place-items:center; border:2px dashed #4f8fdc; background:rgba(237,247,255,.96); color:#1d66b4; font-size:15px; font-weight:900; pointer-events:none; }
+.support-reply-composer.dragging { border-color:#4f8fdc; }
 
 .forum-write { border-top:2px solid #111; }
 .forum-write-title { min-height:54px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid #ddd; }
@@ -1056,6 +1079,15 @@ button { color:inherit; }
   .post-poll-card>footer { flex-direction:column; padding:11px 15px; }
   .comment-item { grid-template-columns:1fr auto; gap:5px; }
   .comment-item p { grid-column:1 / -1; padding:0; }
+  .comment-item .support-reply-body { grid-column:1 / -1; padding:0; }
+  .support-reply-body img { max-height:360px; }
+  .support-reply-toolbar { align-items:stretch; flex-direction:column; gap:7px; }
+  .support-reply-attach,.support-reply-actions { width:100%; }
+  .support-reply-attach { justify-content:space-between; }
+  .support-reply-actions { justify-content:flex-end; }
+  .support-reply-attach button,.support-reply-actions button { min-height:40px; }
+  .support-reply-previews { grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
+  .support-reply-previews figure { width:100%; height:58px; }
   .comment-heading { align-items:flex-start; flex-direction:column; justify-content:center; gap:5px; }
   .forum-detail-actions button,.report-reasons button,.comment-write button { min-height:40px; }
   .forum-write-actions button,.attendance-tabs button { min-height:40px; }

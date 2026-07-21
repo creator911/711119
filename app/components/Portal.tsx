@@ -6,6 +6,7 @@ import { FeaturedVendorDetail, FeaturedVendorGrid, type FeaturedVendorPost } fro
 import RichTitleInput from "./RichTitleInput";
 import RichTextEditor from "./RichTextEditor";
 import ShopPage from "./ShopPage";
+import SupportReplyComposer from "./SupportReplyComposer";
 import { visiblePageNumbers } from "../lib/board-pagination";
 import { getSampleBoardPosts } from "../lib/board-sample-posts";
 import { comparePopularPosts, isInPopularWindow, postCreatedTime } from "../lib/popular-posts";
@@ -529,8 +530,8 @@ export default function Portal() {
     }
   };
 
-  const submitSupportReply = async (body: string) => {
-    if (!selectedInquiry || supportSubmitting) return;
+  const submitSupportReply = async (body: string): Promise<boolean> => {
+    if (!selectedInquiry || supportSubmitting) return false;
     setSupportSubmitting(true);
     try {
       const response = await fetch(`/api/support/${selectedInquiry.id}?kind=${activeInquiryKind}`, {
@@ -543,8 +544,10 @@ export default function Portal() {
       setSupportReplies((current) => [...current, result]);
       setSupportInquiries((current) => current.map((item) => item.id === selectedInquiry.id ? { ...item, status: "open", replyCount: item.replyCount + 1, updatedAt: result.createdAt } : item));
       showToast("댓글이 등록되었습니다.");
+      return true;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "댓글을 저장하지 못했습니다.");
+      return false;
     } finally {
       setSupportSubmitting(false);
     }
@@ -680,7 +683,7 @@ export default function Portal() {
             onOpen={(inquiry) => void openInquiry(inquiry)}
             onCloseDetail={() => { setSelectedInquiry(null); setSupportReplies([]); }}
             onLoginRequired={() => setModal("login")}
-            onReply={(body) => void submitSupportReply(body)}
+            onReply={submitSupportReply}
           />
         ) : view === "mypage" ? (
           <MyPage key={viewerNickname || "guest"} data={myPage} loading={myPageLoading} onOpenPost={openMyPost} onOpenShop={openShop} loggedIn={Boolean(viewer)} />
@@ -902,26 +905,18 @@ function SupportDetail({ inquiry, replies, submitting, onClose, onReply }: {
   replies: SupportReply[];
   submitting: boolean;
   onClose: () => void;
-  onReply: (body: string) => void;
+  onReply: (body: string) => Promise<boolean>;
 }) {
-  const [body, setBody] = useState("");
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const content = body.trim();
-    if (!content) return;
-    onReply(content);
-    setBody("");
-  };
   return <article className="forum-detail support-detail">
     <header><h2>{inquiry.title}</h2><div><span>{inquiry.author}</span><span>{new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(inquiry.createdAt))}</span><span>{supportStatusLabel(inquiry.status)}</span><span>댓글 {replies.length}</span></div></header>
     <div className="forum-detail-body rich-body" dangerouslySetInnerHTML={{ __html: renderRichBody(inquiry.body) }} />
     <section className="forum-comments">
       <div className="comment-heading"><b>문의 댓글 <em>{replies.length}</em>개</b><button type="button" onClick={onClose}>목록</button></div>
       <div className="comment-list">
-        {replies.map((reply) => <div className={`comment-item support-reply ${reply.senderType}`} key={reply.id}><b>{reply.senderType === "staff" ? "운영자" : inquiry.author}</b><p>{reply.body}</p><time>{formatPostTime(reply.createdAt)}</time></div>)}
+        {replies.map((reply) => <div className={`comment-item support-reply ${reply.senderType}`} key={reply.id}><b>{reply.senderType === "staff" ? "운영자" : inquiry.author}</b><div className="rich-body support-reply-body" dangerouslySetInnerHTML={{ __html: renderRichBody(reply.body) }} /><time>{formatPostTime(reply.createdAt)}</time></div>)}
         {replies.length === 0 && <p className="comment-empty">아직 답변이 없습니다.</p>}
       </div>
-      <form className="comment-write" onSubmit={submit}><div><strong>추가 댓글</strong><span>{body.length} / 1000</span></div><textarea value={body} onChange={(event) => setBody(event.target.value)} maxLength={1000} placeholder="추가 문의 내용을 입력해 주세요." /><div><button type="submit" disabled={submitting || !body.trim()}>등록</button></div></form>
+      <SupportReplyComposer key={inquiry.id} submitting={submitting} onSend={onReply} />
     </section>
   </article>;
 }

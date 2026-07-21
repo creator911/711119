@@ -14,6 +14,7 @@ import {
   releaseBodyMediaReferences,
   reserveBodyMedia,
   rollbackBodyMedia,
+  supportReplyMediaFinalizeStatements,
 } from "../app/lib/media-lifecycle.ts";
 
 function asyncDatabase(database) {
@@ -80,6 +81,7 @@ function mediaDatabase() {
     CREATE TABLE posts (id INTEGER PRIMARY KEY, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'published');
     CREATE TABLE vendor_posts (id INTEGER PRIMARY KEY, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'published');
     CREATE TABLE support_inquiries (id INTEGER PRIMARY KEY, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open');
+    CREATE TABLE support_inquiry_replies (id INTEGER PRIMARY KEY, inquiry_id INTEGER NOT NULL, body TEXT NOT NULL);
     CREATE TABLE featured_vendor_posts (slot INTEGER PRIMARY KEY, body TEXT NOT NULL, cover_key TEXT);
   `);
   return { sqlite, database: asyncDatabase(sqlite) };
@@ -93,9 +95,31 @@ test("정규화 본문의 이미지와 동영상 키만 첨부 대상으로 추�
     <a href="/api/media/${firstKey}">링크</a>
     <img src="/api/media/${firstKey}" />
     <video controls="controls" src="/api/media/${secondKey}"></video>
+    <img src="/api/support/media/${firstKey}" />
     <img src="https://example.com/not-local.jpg" />
   `);
   assert.deepEqual(keys, [firstKey, secondKey]);
+});
+
+test("고객센터 답글 이미지는 문의 참조로 확정되고 보호 주소도 추적한다", async () => {
+  const { sqlite, database } = mediaDatabase();
+  const body = `<p>첨부 답변</p><p><img src="/api/support/media/${firstKey}" /></p>`;
+  await recordPendingMedia(database, {
+    key: firstKey,
+    ownerKey: "member:7",
+    mediaType: "image",
+    contentType: "image/jpeg",
+    sizeBytes: 120,
+  });
+  await assert.rejects(() => reserveBodyMedia(database, "member:8", body), MediaOwnershipError);
+  const claim = await reserveBodyMedia(database, "member:7", body);
+  sqlite.prepare("INSERT INTO support_inquiries(id,body,status) VALUES(9,'문의','open')").run();
+  sqlite.prepare("INSERT INTO support_inquiry_replies(id,inquiry_id,body) VALUES(15,9,?)").run(body);
+  await database.batch(supportReplyMediaFinalizeStatements(database, claim, 9, 15, body, "2026-07-22T01:00:00.000Z"));
+
+  assert.equal(sqlite.prepare("SELECT status FROM uploaded_media WHERE key=?").get(firstKey).status, "attached");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM uploaded_media_references WHERE media_key=? AND resource_type='support' AND resource_id='9'").get(firstKey).count, 1);
+  sqlite.close();
 });
 
 test("pending 미디어는 업로더만 예약할 수 있고 저장 성공 뒤 attached가 된다", async () => {
