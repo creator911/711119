@@ -3,7 +3,9 @@ import { memberFromSession } from "../../lib/member-auth";
 import { attachPostPoll, PollValidationError, preparePostBody } from "../../lib/post-polls";
 import { buildPostListQuery } from "../../lib/post-list-query";
 import { communityTagsFromMask, isCommunityBoardCategory, validateCommunityTags, type CommunityTag } from "../../lib/community-tags";
+import { normalizeTitleColor } from "../../lib/title-colors";
 import { hasRichMedia } from "../../lib/rich-text";
+import { refreshAutomaticMemberLevel } from "../../lib/member-level-progress";
 import {
   finalizeBodyMedia,
   mediaLifecycleErrorStatus,
@@ -47,9 +49,10 @@ export async function POST(request: Request) {
   let saveCommitted = false;
   let createdPostId = 0;
   try {
-    const payload = await request.json() as { category?: unknown; title?: unknown; body?: unknown; isPinned?: unknown; communityTags?: unknown };
+    const payload = await request.json() as { category?: unknown; title?: unknown; titleColor?: unknown; body?: unknown; isPinned?: unknown; communityTags?: unknown };
     const category = typeof payload.category === "string" ? payload.category : "";
     const title = typeof payload.title === "string" ? payload.title : "";
+    const titleColor = normalizeTitleColor(payload.titleColor);
     const body = typeof payload.body === "string" ? payload.body : "";
     const isPinned = payload.isPinned === true;
     const normalizedTitle = title.trim().replace(/\s+/g, " ");
@@ -60,6 +63,7 @@ export async function POST(request: Request) {
     if (!MEMBER_WRITE_CATEGORIES.includes(category as typeof MEMBER_WRITE_CATEGORIES[number])) {
       return Response.json({ error: "이 게시판에는 회원 글을 등록할 수 없습니다." }, { status: 403 });
     }
+    if (titleColor === null) return Response.json({ error: "제목 색상을 확인해 주세요." }, { status: 400 });
     if (isPinned && (user.level !== 10 || (category !== "community" && category !== "reviews"))) {
       return Response.json({ error: "커뮤니티·후기 상단 고정은 레벨 10 관리자만 사용할 수 있습니다." }, { status: 403 });
     }
@@ -76,16 +80,22 @@ export async function POST(request: Request) {
     mediaClaim = await reserveBodyMedia(env.DB, memberMediaActorKey(user.id), normalizedBody);
     const createdAt = new Date().toISOString();
     const inserted = await env.DB.prepare(`
-      INSERT INTO posts(category,title,body,author_id,views,likes,dislikes,report_count,is_notice,is_pinned,community_tag_mask,status,created_at)
-      VALUES(?,?,?,?,0,0,0,0,0,?,?,'published',?)
-    `).bind(category, normalizedTitle, normalizedBody, user.id, isPinned ? 1 : 0, communityTagMask, createdAt).run();
+      INSERT INTO posts(category,title,title_color,body,author_id,views,likes,dislikes,report_count,is_notice,is_pinned,community_tag_mask,status,created_at)
+      VALUES(?,?,?,?,?,0,0,0,0,0,?,?,'published',?)
+    `).bind(category, normalizedTitle, titleColor, normalizedBody, user.id, isPinned ? 1 : 0, communityTagMask, createdAt).run();
     const postId = Number(inserted.meta.last_row_id);
     createdPostId = postId;
     const finalBody = await attachPostPoll(env.DB, postId, normalizedBody, poll, createdAt);
     await finalizeBodyMedia(env.DB, mediaClaim, "post", postId, finalBody, createdAt);
     saveCommitted = true;
+    let authorLevel = user.level;
+    try {
+      authorLevel = await refreshAutomaticMemberLevel(env.DB, user.id);
+    } catch (levelError) {
+      console.error("Automatic member level refresh failed", levelError);
+    }
     return Response.json({
-      post: { id: postId, category, title: normalizedTitle, body: finalBody, communityTags, author: user.nickname, authorLevel: user.level, views: 0, likes: 0, dislikes: 0, reportCount: 0, commentCount: 0, isNotice: false, isPinned, isOwn: true, canEdit: true, canDelete: true, createdAt },
+      post: { id: postId, category, title: normalizedTitle, titleColor, body: finalBody, communityTags, author: user.nickname, authorLevel, views: 0, likes: 0, dislikes: 0, reportCount: 0, commentCount: 0, isNotice: false, isPinned, isOwn: true, canEdit: true, canDelete: true, createdAt },
     }, { status: 201 });
   } catch (error) {
     if (!saveCommitted && createdPostId) {

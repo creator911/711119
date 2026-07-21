@@ -11,6 +11,7 @@ export const users = sqliteTable("users", {
   firstLoginIp: text("first_login_ip"),
   points: integer("points").notNull().default(0),
   level: integer("level").notNull().default(1),
+  levelLocked: integer("level_locked", { mode: "boolean" }).notNull().default(false),
   isDirector: integer("is_director", { mode: "boolean" }).notNull().default(false),
   isPartner: integer("is_partner", { mode: "boolean" }).notNull().default(false),
   role: text("role").notNull().default("member"),
@@ -64,8 +65,10 @@ export const posts = sqliteTable("posts", {
   category: text("category").notNull(),
   communityTagMask: integer("community_tag_mask").notNull().default(0),
   title: text("title").notNull(),
+  titleColor: text("title_color").notNull().default(""),
   body: text("body").notNull().default(""),
   authorId: integer("author_id").notNull(),
+  authorName: text("author_name").notNull().default(""),
   views: integer("views").notNull().default(0),
   likes: integer("likes").notNull().default(0),
   dislikes: integer("dislikes").notNull().default(0),
@@ -205,14 +208,28 @@ export const vendorPosts = sqliteTable("vendor_posts", {
   region: text("region").notNull(),
   district: text("district").notNull(),
   title: text("title").notNull(),
+  titleColor: text("title_color").notNull().default(""),
   body: text("body").notNull().default(""),
   authorId: integer("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   status: text("status").notNull().default("published"),
+  jumpedAt: text("jumped_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (table) => [
   uniqueIndex("vendor_posts_author_region_district_unique").on(table.authorId, table.region, table.district),
+  index("vendor_posts_jump_idx").on(table.status, table.jumpedAt, table.id),
   index("vendor_posts_filter_idx").on(table.industry, table.region, table.district, table.id),
+]);
+
+export const vendorPostJumpUsage = sqliteTable("vendor_post_jump_usage", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  jumpDate: text("jump_date").notNull(),
+  usedCount: integer("used_count").notNull().default(0),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("vendor_post_jump_usage_user_date_unique").on(table.userId, table.jumpDate),
+  index("vendor_post_jump_usage_user_idx").on(table.userId),
 ]);
 
 export const featuredVendorPosts = sqliteTable("featured_vendor_posts", {

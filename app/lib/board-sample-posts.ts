@@ -1,10 +1,12 @@
 import { COMMUNITY_TAGS, type CommunityTag } from "./community-tags.ts";
+import type { TitleColor } from "./title-colors.ts";
 
 export type SampleBoardKind = "notices" | "reviews" | "events" | "community";
 
 export type SampleBoardPost = {
   id: string;
   title: string;
+  titleColor: TitleColor;
   body: string;
   author: string;
   authorLevel: number;
@@ -175,6 +177,7 @@ export function getSampleBoardPosts(kind: SampleBoardKind, now: Date = SAMPLE_PU
   return samples[kind].map(({ ageHours, ...post }, index) => ({
     ...post,
     id: `sample-${kind}-${String(index + 1).padStart(2, "0")}`,
+    titleColor: "",
     authorLevel: kind === "notices" || kind === "events" ? 0 : 1,
     reportCount: 0,
     isNotice: kind === "notices",

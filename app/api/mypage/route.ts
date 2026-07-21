@@ -8,7 +8,7 @@ export async function GET(request: Request) {
 
   try {
     const posts = await env.DB.prepare(`
-      SELECT p.id,p.category,p.title,p.body,p.views,p.likes,p.dislikes,p.report_count AS reportCount,p.is_notice AS isNotice,p.is_pinned AS isPinned,p.community_tag_mask AS communityTagMask,p.created_at AS createdAt,
+      SELECT p.id,p.category,p.title,p.title_color AS titleColor,p.body,p.views,p.likes,p.dislikes,p.report_count AS reportCount,p.is_notice AS isNotice,p.is_pinned AS isPinned,p.community_tag_mask AS communityTagMask,p.created_at AS createdAt,
              COALESCE(u.nickname,'탈퇴회원') AS author,
              COALESCE(u.level,0) AS authorLevel,
              (SELECT COUNT(*) FROM post_comments c WHERE c.post_id=p.id AND c.status='published') AS commentCount

@@ -135,9 +135,18 @@
 .event-list article span { color:#8b9098; font-size:9px; }
 .event-list article>em { flex:0 0 auto; border-radius:10px; background:#e7f7ef; color:#15975a; padding:5px 8px; font-size:8px; font-style:normal; font-weight:800; }
 .admin-notice-badge { display:inline-block; margin-right:7px; border:1px solid #111; background:#111; color:#fff; padding:2px 4px; font-size:8px; font-style:normal; }
+.admin-title-color-picker { border:1px solid #e2e4e7; border-radius:6px; background:#fafbfc; padding:10px 11px; }
+.admin-title-color-picker legend { padding:0 5px; color:#5d636c; font-size:10px; font-weight:900; }
+.admin-title-color-picker>div { display:flex; flex-wrap:wrap; gap:5px; }
+.admin-title-color-picker label { position:relative; }
+.admin-title-color-picker input { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+.admin-title-color-picker span { min-width:58px; height:28px; display:flex; align-items:center; justify-content:center; gap:5px; border:1px solid #d6d9de; border-radius:4px; background:#fff; color:#202329; padding:0 8px; font-size:10px; font-weight:800; cursor:pointer; }
+.admin-title-color-picker i { width:8px; height:8px; border:1px solid rgba(0,0,0,.18); border-radius:50%; }
+.admin-title-color-picker input:checked+span { border-color:#111; background:#111; color:#fff; }
 .level-control { display:flex; align-items:center; gap:4px; border-radius:5px; background:#f3f4f6; padding:3px 5px; }
 .level-control>b { color:#ff554c; font-size:10px; }
 .admin-tr .level-control input { width:48px; border:0; background:transparent; padding:0 2px; font-weight:900; }
+.level-control>i { margin-left:auto; border-radius:3px; background:#fff; color:#555; padding:3px 4px; font-size:9px; font-style:normal; font-weight:900; }
 .green-text { color:#18a963; }
 .red-text { color:#e64d47; }
 .designation-count { border-radius:14px; background:#fff0ef; color:#e04c45; padding:7px 11px; font-size:10px; }

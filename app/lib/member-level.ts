@@ -1,10 +1,25 @@
 export const MIN_MEMBER_LEVEL = 1;
 export const MAX_MEMBER_LEVEL = 10;
+export const MAX_AUTOMATIC_MEMBER_LEVEL = 9;
+
+export const MEMBER_LEVEL_REQUIREMENTS = [
+  { level: 9, posts: 5000, comments: 50000 },
+  { level: 8, posts: 1000, comments: 10000 },
+  { level: 7, posts: 500, comments: 3000 },
+  { level: 6, posts: 200, comments: 1000 },
+  { level: 5, posts: 50, comments: 300 },
+  { level: 4, posts: 20, comments: 50 },
+  { level: 3, posts: 5, comments: 15 },
+  { level: 2, posts: 1, comments: 3 },
+] as const;
 
 export const isMemberLevel = (value: unknown): value is number =>
   Number.isInteger(value) && Number(value) >= MIN_MEMBER_LEVEL && Number(value) <= MAX_MEMBER_LEVEL;
 
 export const memberLevelLabel = (level: number) => `Lv.${level}`;
+
+export const automaticMemberLevel = (postCount: number, commentCount: number) =>
+  MEMBER_LEVEL_REQUIREMENTS.find((requirement) => postCount >= requirement.posts && commentCount >= requirement.comments)?.level ?? MIN_MEMBER_LEVEL;
 
 /**
  * 레벨 권한은 누적되지 않습니다.

@@ -11,7 +11,7 @@ export async function PATCH(request: Request) {
     if (!Number.isInteger(id) || !Number.isInteger(points) || Number(points) < 0 || Number(points) > 1_000_000_000 || !isMemberLevel(level) || normalizedNickname.length < 2 || normalizedNickname.length > 12 || !["active", "suspended"].includes(status) || (isDirector !== undefined && typeof isDirector !== "boolean") || (isPartner !== undefined && typeof isPartner !== "boolean")) {
       return Response.json({ error: "회원 정보 형식을 확인해 주세요." }, { status: 400 });
     }
-    const current = await env.DB.prepare("SELECT level,is_director AS isDirector,is_partner AS isPartner FROM users WHERE id=?").bind(id).first<{ level: number; isDirector: number; isPartner: number }>();
+    const current = await env.DB.prepare("SELECT level,level_locked AS levelLocked,is_director AS isDirector,is_partner AS isPartner FROM users WHERE id=?").bind(id).first<{ level: number; levelLocked: number; isDirector: number; isPartner: number }>();
     if (!current) return Response.json({ error: "회원을 찾을 수 없습니다." }, { status: 404 });
     if (!operator.canManageAdmins && current.level !== level && (current.level === 10 || level === 10)) {
       return Response.json({ error: "Lv.10 관리자 지정·해제는 오너 계정만 할 수 있습니다." }, { status: 403 });
@@ -21,7 +21,8 @@ export async function PATCH(request: Request) {
     if (nextIsPartner && !nextIsDirector) {
       return Response.json({ error: "실장으로 지정된 회원만 제휴회원으로 변경할 수 있습니다." }, { status: 409 });
     }
-    const statements = [env.DB.prepare("UPDATE users SET nickname = ?, points = ?, level = ?, status = ?, is_director = ?, is_partner = ? WHERE id = ?").bind(normalizedNickname, points, level, status, nextIsDirector ? 1 : 0, nextIsPartner ? 1 : 0, id)];
+    const nextLevelLocked = current.level !== level ? 1 : Number(Boolean(current.levelLocked));
+    const statements = [env.DB.prepare("UPDATE users SET nickname = ?, points = ?, level = ?, level_locked = ?, status = ?, is_director = ?, is_partner = ? WHERE id = ?").bind(normalizedNickname, points, level, nextLevelLocked, status, nextIsDirector ? 1 : 0, nextIsPartner ? 1 : 0, id)];
     if (current.isDirector && !nextIsDirector) statements.push(env.DB.prepare("DELETE FROM director_regions WHERE user_id=?").bind(id));
     if (current.isDirector && !nextIsDirector || current.isPartner && !nextIsPartner) statements.push(env.DB.prepare("DELETE FROM featured_vendor_permissions WHERE user_id=?").bind(id));
     const results = await env.DB.batch(statements);

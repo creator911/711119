@@ -14,6 +14,7 @@ import {
 } from "../../../lib/media-lifecycle";
 import { mediaActorKey } from "../../../lib/media-actor";
 import { communityTagsFromMask, isCommunityBoardCategory, validateCommunityTags } from "../../../lib/community-tags";
+import { normalizeTitleColor } from "../../../lib/title-colors";
 
 const parsePostId = (request: Request) => {
   const segments = new URL(request.url).pathname.split("/").filter(Boolean);
@@ -26,6 +27,7 @@ type StoredPost = {
   authorId: number;
   category: string;
   title: string;
+  titleColor: string;
   body: string;
   isPinned: number;
   communityTagMask: number;
@@ -36,8 +38,8 @@ const canManagePost = (viewer: MemberSession | null, post: Pick<StoredPost, "aut
 
 async function publicPost(id: number, viewer: MemberSession | null, adminActor = false) {
   const post = await env.DB.prepare(`
-    SELECT p.id,p.category,p.title,p.body,p.author_id AS authorId,p.views,p.likes,p.dislikes,p.report_count AS reportCount,p.is_notice AS isNotice,p.is_pinned AS isPinned,p.community_tag_mask AS communityTagMask,p.created_at AS createdAt,
-           CASE WHEN u.nickname IS NULL THEN '운영자' ELSE u.nickname END AS author,
+    SELECT p.id,p.category,p.title,p.title_color AS titleColor,p.body,p.author_id AS authorId,p.views,p.likes,p.dislikes,p.report_count AS reportCount,p.is_notice AS isNotice,p.is_pinned AS isPinned,p.community_tag_mask AS communityTagMask,p.created_at AS createdAt,
+           COALESCE(NULLIF(p.author_name,''),u.nickname,'운영자') AS author,
            COALESCE(u.level,0) AS authorLevel,
            (SELECT COUNT(*) FROM post_comments c WHERE c.post_id=p.id AND c.status='published') AS commentCount
     FROM posts p LEFT JOIN users u ON u.id=p.author_id
@@ -89,13 +91,16 @@ export async function PATCH(request: Request) {
 
   try {
     const post = await env.DB.prepare(
-      "SELECT id,author_id AS authorId,category,title,body,is_pinned AS isPinned,community_tag_mask AS communityTagMask FROM posts WHERE id=? AND status='published'",
+      "SELECT id,author_id AS authorId,category,title,title_color AS titleColor,body,is_pinned AS isPinned,community_tag_mask AS communityTagMask FROM posts WHERE id=? AND status='published'",
     ).bind(id).first<StoredPost>();
     if (!post) return Response.json({ error: "게시글을 찾을 수 없습니다." }, { status: 404 });
     if (!canManagePost(viewer, post, adminActor)) return Response.json({ error: "게시글을 수정할 권한이 없습니다." }, { status: 403 });
 
-    const payload = await request.json() as { title?: unknown; body?: unknown; isPinned?: unknown; communityTags?: unknown };
+    const payload = await request.json() as { title?: unknown; titleColor?: unknown; body?: unknown; isPinned?: unknown; communityTags?: unknown };
     const title = typeof payload.title === "string" ? payload.title.trim().replace(/\s+/g, " ") : "";
+    const titleColor = Object.prototype.hasOwnProperty.call(payload, "titleColor")
+      ? normalizeTitleColor(payload.titleColor)
+      : post.titleColor;
     const sourceBody = typeof payload.body === "string" ? payload.body : "";
     const { body, textLength, poll } = preparePostBody(sourceBody);
     const hasMedia = hasRichMedia(body);
@@ -109,6 +114,7 @@ export async function PATCH(request: Request) {
     } else if (payload.communityTags !== undefined && (!Array.isArray(payload.communityTags) || payload.communityTags.length > 0)) {
       return Response.json({ error: "머릿글은 커뮤니티 글에만 사용할 수 있습니다." }, { status: 400 });
     }
+    if (titleColor === null) return Response.json({ error: "제목 색상을 확인해 주세요." }, { status: 400 });
     if (title.length < 2 || title.length > 80) return Response.json({ error: "제목은 2~80자로 입력해 주세요." }, { status: 400 });
     if ((textLength < 2 && !hasMedia && !poll) || textLength > 3000 || body.length > 20000) {
       return Response.json({ error: "내용은 2~3,000자로 입력해 주세요." }, { status: 400 });
@@ -144,8 +150,8 @@ export async function PATCH(request: Request) {
     }
     const updateStatementIndex = statements.length;
     statements.push(env.DB.prepare(
-      "UPDATE posts SET title=?,body=?,is_pinned=?,community_tag_mask=? WHERE id=? AND status='published' AND (?=1 OR author_id=? OR ?=10)",
-    ).bind(title, body, nextPinned, nextCommunityTagMask, id, adminActor ? 1 : 0, viewer?.id ?? -1, viewer?.level ?? 0));
+      "UPDATE posts SET title=?,title_color=?,body=?,is_pinned=?,community_tag_mask=? WHERE id=? AND status='published' AND (?=1 OR author_id=? OR ?=10)",
+    ).bind(title, titleColor, body, nextPinned, nextCommunityTagMask, id, adminActor ? 1 : 0, viewer?.id ?? -1, viewer?.level ?? 0));
     statements.push(...bodyMediaFinalizeStatements(env.DB, mediaClaim, "post", id, body));
     const results = await env.DB.batch(statements);
     if (!results[updateStatementIndex]?.meta.changes) {

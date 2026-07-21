@@ -72,5 +72,6 @@ test("커뮤니티 작성·수정 화면과 주요 글 목록에 머릿글 UI가
   assert.equal((portal.match(/<CommunityTagPicker /g) ?? []).length, 2, "새 글과 글 수정 화면에 각각 선택기가 있어야 한다");
   assert.ok((portal.match(/<CommunityPostTitle /g) ?? []).length >= 4, "목록·상세·미리보기·마이페이지에서 머릿글을 표시해야 한다");
   assert.match(styles, /\.community-tag-option input:checked\+span\s*\{[^}]*background:#111;[^}]*color:#fff;/);
+  assert.match(styles, /\.community-title-tags\s*\{[^}]*color:#111;/);
   assert.match(styles, /@media[^]*\.community-tag-options\s*\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
 });

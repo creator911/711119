@@ -12,6 +12,7 @@ import {
 } from "../../../lib/media-lifecycle";
 import { mediaActorKey } from "../../../lib/media-actor";
 import { isVendorCategory, isVendorRegion } from "../../../lib/vendor-regions";
+import { normalizeTitleColor } from "../../../lib/title-colors";
 
 type StoredVendorPost = {
   id: number;
@@ -19,6 +20,7 @@ type StoredVendorPost = {
   region: string;
   district: string;
   title: string;
+  titleColor: string;
   body: string;
   authorId: number;
   author: string;
@@ -39,6 +41,7 @@ const decorate = (post: StoredVendorPost, viewer: MemberSession | null, adminAct
   region: post.region,
   district: post.district,
   title: post.title,
+  titleColor: post.titleColor,
   body: post.body,
   author: post.author,
   authorLevel: post.authorLevel,
@@ -51,7 +54,7 @@ const decorate = (post: StoredVendorPost, viewer: MemberSession | null, adminAct
 
 async function loadPost(id: number) {
   return env.DB.prepare(`
-    SELECT vp.id,vp.industry,vp.region,vp.district,vp.title,vp.body,vp.author_id AS authorId,
+    SELECT vp.id,vp.industry,vp.region,vp.district,vp.title,vp.title_color AS titleColor,vp.body,vp.author_id AS authorId,
            COALESCE(u.nickname,'탈퇴회원') AS author,COALESCE(u.level,0) AS authorLevel,
            vp.created_at AS createdAt,vp.updated_at AS updatedAt
     FROM vendor_posts vp LEFT JOIN users u ON u.id=vp.author_id
@@ -84,14 +87,18 @@ export async function PATCH(request: Request) {
     const post = await loadPost(id);
     if (!post) return Response.json({ error: "업체정보 글을 찾을 수 없습니다." }, { status: 404 });
     if (!canManage(viewer, post, adminActor)) return Response.json({ error: "업체정보 글을 수정할 권한이 없습니다." }, { status: 403 });
-    const payload = await request.json() as { industry?: unknown; region?: unknown; district?: unknown; title?: unknown; body?: unknown };
+    const payload = await request.json() as { industry?: unknown; region?: unknown; district?: unknown; title?: unknown; titleColor?: unknown; body?: unknown };
     const industry = typeof payload.industry === "string" ? payload.industry.trim() : "";
     const region = typeof payload.region === "string" ? payload.region.trim() : "";
     const district = typeof payload.district === "string" ? payload.district.trim() : "";
     const title = typeof payload.title === "string" ? payload.title.trim().replace(/\s+/g, " ") : "";
+    const titleColor = Object.prototype.hasOwnProperty.call(payload, "titleColor")
+      ? normalizeTitleColor(payload.titleColor)
+      : post.titleColor;
     const sourceBody = typeof payload.body === "string" ? payload.body : "";
     if (!isVendorCategory(industry)) return Response.json({ error: "업종을 하나만 선택해 주세요." }, { status: 400 });
     if (!isVendorRegion(region, district)) return Response.json({ error: "상세지역을 하나만 선택해 주세요." }, { status: 400 });
+    if (titleColor === null) return Response.json({ error: "제목 색상을 확인해 주세요." }, { status: 400 });
 
     if (region !== post.region || district !== post.district) return Response.json({ error: "등록한 업체정보의 상세지역은 변경할 수 없습니다." }, { status: 409 });
 
@@ -105,7 +112,7 @@ export async function PATCH(request: Request) {
     mediaClaim = await reserveBodyMedia(env.DB, actorKey, body, post.body);
     const updatedAt = new Date().toISOString();
     const updateStatement = env.DB.prepare(`
-      UPDATE vendor_posts SET industry=?,region=?,district=?,title=?,body=?,updated_at=?
+      UPDATE vendor_posts SET industry=?,region=?,district=?,title=?,title_color=?,body=?,updated_at=?
       WHERE id=? AND status='published' AND (
         ?=1 OR EXISTS(
           SELECT 1 FROM users
@@ -113,7 +120,7 @@ export async function PATCH(request: Request) {
             AND (vendor_posts.author_id=users.id OR users.level=10)
         )
       )
-    `).bind(industry, region, district, title, body, updatedAt, id, adminActor ? 1 : 0, viewer?.id ?? -1);
+    `).bind(industry, region, district, title, titleColor, body, updatedAt, id, adminActor ? 1 : 0, viewer?.id ?? -1);
     const results = await env.DB.batch([
       updateStatement,
       ...bodyMediaFinalizeStatements(env.DB, mediaClaim, "vendor", id, body, updatedAt),

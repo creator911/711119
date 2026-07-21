@@ -10,7 +10,11 @@ import {
   rollbackBodyMedia,
   type MediaAttachmentClaim,
 } from "../../lib/media-lifecycle";
-import { isVendorCategory, isVendorRegion, vendorRegionGroups } from "../../lib/vendor-regions";
+import { isVendorCategory, isVendorRegion, vendorRegionGroups, writableVendorCategories } from "../../lib/vendor-regions";
+import { normalizeTitleColor } from "../../lib/title-colors";
+
+const DAILY_VENDOR_JUMP_LIMIT = 30;
+const VENDOR_JUMP_RESET_TEXT = "00시00분에 새롭게 갱신 됩니다";
 
 type VendorPostRow = {
   id: number;
@@ -18,6 +22,7 @@ type VendorPostRow = {
   region: string;
   district: string;
   title: string;
+  titleColor: string;
   body: string;
   authorId: number;
   author: string;
@@ -29,7 +34,7 @@ type VendorPostRow = {
 const decorate = (post: VendorPostRow, viewer: MemberSession | null, adminActor = false) => {
   const canManage = adminActor || Boolean(viewer && (viewer.level === 10 || viewer.id === post.authorId));
   return {
-    id: post.id, industry: post.industry, region: post.region, district: post.district, title: post.title, body: post.body,
+    id: post.id, industry: post.industry, region: post.region, district: post.district, title: post.title, titleColor: post.titleColor, body: post.body,
     author: post.author, authorLevel: post.authorLevel, createdAt: post.createdAt, updatedAt: post.updatedAt,
     isOwn: Boolean(viewer && viewer.id === post.authorId), canEdit: canManage, canDelete: canManage,
   };
@@ -54,6 +59,47 @@ async function loadAssignments(userId: number) {
   return result.results;
 }
 
+function koreaDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date).reduce<Record<string, string>>((acc, part) => {
+    if (part.type !== "literal") acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+async function loadJumpSummary(userId: number, assignmentCount: number) {
+  if (!assignmentCount) return { remaining: 0, used: 0, limit: DAILY_VENDOR_JUMP_LIMIT, resetText: VENDOR_JUMP_RESET_TEXT };
+  const row = await env.DB.prepare("SELECT used_count AS usedCount FROM vendor_post_jump_usage WHERE user_id=? AND jump_date=?")
+    .bind(userId, koreaDateKey())
+    .first<{ usedCount: number }>();
+  const used = Math.max(0, Number(row?.usedCount ?? 0));
+  return {
+    remaining: Math.max(0, DAILY_VENDOR_JUMP_LIMIT - used),
+    used,
+    limit: DAILY_VENDOR_JUMP_LIMIT,
+    resetText: VENDOR_JUMP_RESET_TEXT,
+  };
+}
+
+function orderCase(column: string, values: readonly string[]) {
+  return `CASE ${column} ${values.map((_, index) => `WHEN ? THEN ${index}`).join(" ")} ELSE ${values.length} END`;
+}
+
+const vendorRegionOrder = vendorRegionGroups.filter((group) => group.districts.length > 0).map((group) => group.label);
+const vendorOrderValues = [...writableVendorCategories, ...vendorRegionOrder];
+const vendorOrderSql = [
+  "COALESCE(vp.jumped_at,vp.created_at) DESC",
+  `${orderCase("vp.industry", writableVendorCategories)} ASC`,
+  `${orderCase("vp.region", vendorRegionOrder)} ASC`,
+  "vp.district ASC",
+  "vp.id DESC",
+].join(",");
+
 export async function GET(request: Request) {
   try {
     const [viewer, operator] = await Promise.all([memberFromSession(request), adminSession(request, env)]);
@@ -63,7 +109,7 @@ export async function GET(request: Request) {
     const district = url.searchParams.get("district")?.trim() || "전체";
     const search = url.searchParams.get("q")?.trim() || "";
     const cursorValue = url.searchParams.get("cursor");
-    const cursor = cursorValue ? Number(cursorValue) : null;
+    const cursor = cursorValue ? Number(cursorValue) : 0;
     if (industry !== "전체" && !isVendorCategory(industry)) return Response.json({ error: "업종을 확인해 주세요." }, { status: 400 });
     const regionExists = region === "전체" || vendorRegionGroups.some((group) => group.label === region);
     if (!regionExists || district !== "전체" && !isVendorRegion(region, district)) return Response.json({ error: "지역을 확인해 주세요." }, { status: 400 });
@@ -83,21 +129,21 @@ export async function GET(request: Request) {
       )`);
       bindings.push(search, search, search, search, search);
     }
-    if (cursor) { conditions.push("vp.id<?"); bindings.push(cursor); }
     const rows = await env.DB.prepare(`
-      SELECT vp.id,vp.industry,vp.region,vp.district,vp.title,vp.body,vp.author_id AS authorId,
+      SELECT vp.id,vp.industry,vp.region,vp.district,vp.title,vp.title_color AS titleColor,vp.body,vp.author_id AS authorId,
              COALESCE(u.nickname,'탈퇴회원') AS author,COALESCE(u.level,0) AS authorLevel,
              vp.created_at AS createdAt,vp.updated_at AS updatedAt
       FROM vendor_posts vp LEFT JOIN users u ON u.id=vp.author_id
       WHERE ${conditions.join(" AND ")}
-      ORDER BY vp.id DESC LIMIT 31
-    `).bind(...bindings).all<VendorPostRow>();
+      ORDER BY ${vendorOrderSql} LIMIT 31 OFFSET ?
+    `).bind(...bindings, ...vendorOrderValues, cursor).all<VendorPostRow>();
 
     const canWrite = viewer ? await isActiveDirector(viewer.id) : false;
     const assignedRegions = viewer && canWrite ? await loadAssignments(viewer.id) : [];
+    const jumpSummary = viewer && canWrite ? await loadJumpSummary(viewer.id, assignedRegions.length) : null;
     const page = rows.results.slice(0, 30);
-    const nextCursor = rows.results.length > 30 ? page.at(-1)?.id ?? null : null;
-    return Response.json({ posts: page.map((post) => decorate(post, viewer, Boolean(operator))), nextCursor, canWrite, assignedRegions });
+    const nextCursor = rows.results.length > 30 ? cursor + page.length : null;
+    return Response.json({ posts: page.map((post) => decorate(post, viewer, Boolean(operator))), nextCursor, canWrite, assignedRegions, jumpSummary });
   } catch (error) {
     console.error("Vendor post list load failed", error);
     return Response.json({ error: "업체정보 글을 불러오지 못했습니다." }, { status: 500 });
@@ -111,14 +157,16 @@ export async function POST(request: Request) {
   let saveCommitted = false;
   let createdPostId = 0;
   try {
-    const payload = await request.json() as { industry?: unknown; region?: unknown; district?: unknown; title?: unknown; body?: unknown };
+    const payload = await request.json() as { industry?: unknown; region?: unknown; district?: unknown; title?: unknown; titleColor?: unknown; body?: unknown };
     const industry = typeof payload.industry === "string" ? payload.industry.trim() : "";
     const region = typeof payload.region === "string" ? payload.region.trim() : "";
     const district = typeof payload.district === "string" ? payload.district.trim() : "";
     const title = typeof payload.title === "string" ? payload.title.trim().replace(/\s+/g, " ") : "";
+    const titleColor = normalizeTitleColor(payload.titleColor);
     const sourceBody = typeof payload.body === "string" ? payload.body : "";
     if (!isVendorCategory(industry)) return Response.json({ error: "업종을 하나만 선택해 주세요." }, { status: 400 });
     if (!isVendorRegion(region, district)) return Response.json({ error: "상세지역을 하나만 선택해 주세요." }, { status: 400 });
+    if (titleColor === null) return Response.json({ error: "제목 색상을 확인해 주세요." }, { status: 400 });
     const { body, textLength } = normalizeRichBody(sourceBody);
     const hasMedia = /<(?:img|video|iframe)\b/i.test(body);
     if (/post-poll-slot/i.test(body)) return Response.json({ error: "업체정보 글에는 투표를 넣을 수 없습니다." }, { status: 400 });
@@ -127,12 +175,12 @@ export async function POST(request: Request) {
     mediaClaim = await reserveBodyMedia(env.DB, memberMediaActorKey(viewer.id), body);
     const now = new Date().toISOString();
     const inserted = await env.DB.prepare(`
-      INSERT INTO vendor_posts(industry,region,district,title,body,author_id,status,created_at,updated_at)
-      SELECT ?,?,?,?,?,u.id,'published',?,?
+      INSERT INTO vendor_posts(industry,region,district,title,title_color,body,author_id,status,created_at,updated_at)
+      SELECT ?,?,?,?,?,?,u.id,'published',?,?
       FROM users u JOIN director_regions dr
         ON dr.user_id=u.id AND dr.region=? AND dr.district=?
       WHERE u.id=? AND u.status='active' AND u.is_director=1
-    `).bind(industry, region, district, title, body, now, now, region, district, viewer.id).run();
+    `).bind(industry, region, district, title, titleColor, body, now, now, region, district, viewer.id).run();
     if (!inserted.meta.changes) {
       await rollbackBodyMedia(env.DB, mediaClaim);
       mediaClaim = null;
@@ -141,7 +189,7 @@ export async function POST(request: Request) {
     createdPostId = Number(inserted.meta.last_row_id);
     await finalizeBodyMedia(env.DB, mediaClaim, "vendor", createdPostId, body, now);
     saveCommitted = true;
-    const post: VendorPostRow = { id: createdPostId, industry, region, district, title, body, authorId: viewer.id, author: viewer.nickname, authorLevel: viewer.level, createdAt: now, updatedAt: now };
+    const post: VendorPostRow = { id: createdPostId, industry, region, district, title, titleColor, body, authorId: viewer.id, author: viewer.nickname, authorLevel: viewer.level, createdAt: now, updatedAt: now };
     return Response.json({ post: decorate(post, viewer) }, { status: 201 });
   } catch (error) {
     if (!saveCommitted && createdPostId) {

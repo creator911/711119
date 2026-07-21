@@ -12,6 +12,7 @@ import { renderRichBody } from "../lib/rich-text";
 import { horizontalScrollAvailability, horizontalScrollTarget } from "../lib/horizontal-scroll";
 import { vendorCategories, vendorRegionGroups as regionGroups, writableVendorCategories } from "../lib/vendor-regions";
 import { COMMUNITY_TAGS, isCommunityBoardCategory, type CommunityTag } from "../lib/community-tags";
+import { TITLE_COLOR_OPTIONS, type TitleColor } from "../lib/title-colors";
 
 type View = "home" | "notices" | "vendors" | "community" | "reviews" | "events" | "partner" | "support" | "mypage" | "shop";
 type BoardKind = "notices" | "reviews" | "events" | "gifs" | "community";
@@ -22,6 +23,7 @@ type LivePost = {
   id: number;
   category: BoardKind;
   title: string;
+  titleColor: TitleColor;
   body: string;
   author: string;
   authorLevel: number;
@@ -42,6 +44,7 @@ type LivePost = {
 type BoardDisplayPost = {
   id: string | number;
   title: string;
+  titleColor: TitleColor;
   body: string;
   author: string;
   authorLevel: number;
@@ -96,12 +99,14 @@ type EventLeaderboardData = {
   comments: EventRankRow[];
 };
 type VendorAssignment = { region: string; district: string; used: number | boolean };
+type VendorJumpSummary = { remaining: number; used: number; limit: number; resetText: string };
 type VendorTextPost = {
   id: number;
   industry: string;
   region: string;
   district: string;
   title: string;
+  titleColor: TitleColor;
   body: string;
   author: string;
   authorLevel: number;
@@ -188,7 +193,7 @@ export default function Portal() {
         const sharedPost = result.posts?.find((item) => item.id === postId);
         if (!response.ok || !sharedPost) throw new Error(result.error ?? "게시글을 불러오지 못했습니다.");
         setSelectedPost({
-          id: sharedPost.id, title: sharedPost.title, body: sharedPost.body, communityTags: sharedPost.communityTags, author: sharedPost.author,
+          id: sharedPost.id, title: sharedPost.title, titleColor: sharedPost.titleColor || "", body: sharedPost.body, communityTags: sharedPost.communityTags, author: sharedPost.author,
           authorLevel: sharedPost.authorLevel, time: formatPostTime(sharedPost.createdAt), views: sharedPost.views,
           likes: sharedPost.likes, dislikes: sharedPost.dislikes ?? 0, reportCount: sharedPost.reportCount ?? 0, isNotice: Boolean(sharedPost.isNotice), isPinned: Boolean(sharedPost.isPinned),
           commentCount: sharedPost.commentCount, isOwn: sharedPost.isOwn, canEdit: sharedPost.canEdit, canDelete: sharedPost.canDelete, createdAt: sharedPost.createdAt, live: true,
@@ -358,7 +363,7 @@ export default function Portal() {
     setView(board);
     setWriteKind(null);
     setSelectedPost({
-      id: post.id, title: post.title, body: post.body, communityTags: post.communityTags, author: post.author, authorLevel: post.authorLevel,
+      id: post.id, title: post.title, titleColor: post.titleColor || "", body: post.body, communityTags: post.communityTags, author: post.author, authorLevel: post.authorLevel,
       time: formatPostTime(post.createdAt), views: post.views, likes: post.likes, dislikes: post.dislikes ?? 0,
       reportCount: post.reportCount ?? 0, isNotice: Boolean(post.isNotice), isPinned: Boolean(post.isPinned), commentCount: post.commentCount ?? 0,
       isOwn: true, canEdit: true, canDelete: true, createdAt: post.createdAt, live: true,
@@ -432,7 +437,7 @@ export default function Portal() {
       const response = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category: writeKind, title: form.get("title"), body: form.get("body"), isPinned: form.get("isPinned") === "on", ...(isCommunityBoardCategory(writeKind) ? { communityTags } : {}) }),
+        body: JSON.stringify({ category: writeKind, title: form.get("title"), titleColor: form.get("titleColor"), body: form.get("body"), isPinned: form.get("isPinned") === "on", ...(isCommunityBoardCategory(writeKind) ? { communityTags } : {}) }),
       });
       const result = await response.json() as { post?: LivePost; error?: string };
       if (!response.ok || !result.post) throw new Error(result.error ?? "게시글을 저장하지 못했습니다.");
@@ -443,7 +448,7 @@ export default function Portal() {
       }));
       setWriteKind(null);
       setSelectedPost({
-        id: createdPost.id, title: createdPost.title, body: createdPost.body, communityTags: createdPost.communityTags, author: createdPost.author,
+        id: createdPost.id, title: createdPost.title, titleColor: createdPost.titleColor || "", body: createdPost.body, communityTags: createdPost.communityTags, author: createdPost.author,
         authorLevel: createdPost.authorLevel, time: formatPostTime(createdPost.createdAt), views: createdPost.views,
         likes: createdPost.likes, dislikes: createdPost.dislikes, reportCount: createdPost.reportCount, isNotice: Boolean(createdPost.isNotice), isPinned: Boolean(createdPost.isPinned),
         commentCount: createdPost.commentCount, isOwn: true, canEdit: true, canDelete: true, createdAt: createdPost.createdAt, live: true,
@@ -687,7 +692,7 @@ export default function Portal() {
               setSelectedPost(post);
               if (typeof post.id === "number") setLivePosts((current) => ({
                 ...current,
-                events: (current.events ?? []).map((item) => item.id === post.id ? { ...item, title: post.title, body: post.body, communityTags: post.communityTags, views: post.views, likes: post.likes, dislikes: post.dislikes, reportCount: post.reportCount, isNotice: post.isNotice, isPinned: post.isPinned, commentCount: post.commentCount, isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete } : item),
+                events: (current.events ?? []).map((item) => item.id === post.id ? { ...item, title: post.title, titleColor: post.titleColor, body: post.body, communityTags: post.communityTags, views: post.views, likes: post.likes, dislikes: post.dislikes, reportCount: post.reportCount, isNotice: post.isNotice, isPinned: post.isPinned, commentCount: post.commentCount, isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete } : item),
               }));
             }}
             onPostRemoved={(postId) => {
@@ -719,7 +724,7 @@ export default function Portal() {
               setSelectedPost(post);
               if (typeof post.id === "number") setLivePosts((current) => ({
                 ...current,
-                [view as BoardKind]: (current[view as BoardKind] ?? []).map((item) => item.id === post.id ? { ...item, title: post.title, body: post.body, communityTags: post.communityTags, views: post.views, likes: post.likes, dislikes: post.dislikes, reportCount: post.reportCount, isNotice: post.isNotice, isPinned: post.isPinned, commentCount: post.commentCount, isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete } : item),
+                [view as BoardKind]: (current[view as BoardKind] ?? []).map((item) => item.id === post.id ? { ...item, title: post.title, titleColor: post.titleColor, body: post.body, communityTags: post.communityTags, views: post.views, likes: post.likes, dislikes: post.dislikes, reportCount: post.reportCount, isNotice: post.isNotice, isPinned: post.isPinned, commentCount: post.commentCount, isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete } : item),
               }));
             }}
             onPostRemoved={(postId) => {
@@ -736,7 +741,11 @@ export default function Portal() {
         <div className="page-width footer-inner">
           <div><img src="/logo.png" alt="출장나라" /><p>검증된 정보와 건강한 이용 문화를 만듭니다.</p></div>
           <p className="copyright">© 2026 출장나라. All rights reserved.</p>
-          <div className="socials" aria-label="소셜 미디어"><button aria-label="인스타그램">◎</button><button aria-label="X">𝕏</button><button aria-label="텔레그램">✈</button></div>
+          <div className="socials" aria-label="소셜 미디어">
+            <a className="social-instagram" href="https://www.instagram.com/care_nara_/" target="_blank" rel="noreferrer" aria-label="인스타그램 새 창으로 열기" />
+            <button className="social-telegram" type="button" aria-label="텔레그램 링크 준비 중" />
+            <a className="social-x" href="https://x.com/care_nara_" target="_blank" rel="noreferrer" aria-label="트위터 X 새 창으로 열기" />
+          </div>
         </div>
       </footer>
 
@@ -783,7 +792,7 @@ function MyPage({ data, loading, loggedIn, onOpenPost, onOpenShop }: {
             {loading ? <p className="mypage-empty-line">작성글을 불러오는 중입니다.</p> : posts.length ? visiblePosts.map((post) => (
               <button type="button" key={post.id} onClick={() => onOpenPost(post)}>
                 <span>{boardLabels[post.category]}</span>
-                <b><CommunityPostTitle category={post.category} title={post.title} tags={post.communityTags} />{post.commentCount > 0 && <em>[{post.commentCount}]</em>}</b>
+                <b><CommunityPostTitle category={post.category} title={post.title} titleColor={post.titleColor} tags={post.communityTags} />{post.commentCount > 0 && <em>[{post.commentCount}]</em>}</b>
                 <small>추천 {post.likes.toLocaleString()} · 댓글 {post.commentCount.toLocaleString()} · 조회 {post.views.toLocaleString()} · {formatPostTime(post.createdAt)}</small>
               </button>
             )) : <p className="mypage-empty-line">아직 작성한 글이 없습니다.</p>}
@@ -1004,16 +1013,19 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
   const [posts, setPosts] = useState<VendorTextPost[]>([]);
   const [canWrite, setCanWrite] = useState(false);
   const [assignments, setAssignments] = useState<VendorAssignment[]>([]);
+  const [jumpSummary, setJumpSummary] = useState<VendorJumpSummary | null>(null);
   const [selected, setSelected] = useState<VendorTextPost | null>(null);
   const [writing, setWriting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [jumping, setJumping] = useState(false);
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [writeIndustry, setWriteIndustry] = useState("");
   const [writeArea, setWriteArea] = useState("");
   const [writeTitle, setWriteTitle] = useState("");
+  const [writeTitleColor, setWriteTitleColor] = useState<TitleColor>("");
   const [writeBody, setWriteBody] = useState("");
   const [editorBusy, setEditorBusy] = useState(false);
   const requestRef = useRef(0);
@@ -1027,13 +1039,14 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
       if (search.trim()) params.set("q", search.trim());
       if (cursor) params.set("cursor", String(cursor));
       const response = await fetch(`/api/vendor-posts?${params}`, { cache: "no-store" });
-      const result = await response.json() as { posts?: VendorTextPost[]; nextCursor?: number | null; canWrite?: boolean; assignedRegions?: VendorAssignment[]; error?: string };
+      const result = await response.json() as { posts?: VendorTextPost[]; nextCursor?: number | null; canWrite?: boolean; assignedRegions?: VendorAssignment[]; jumpSummary?: VendorJumpSummary | null; error?: string };
       if (!response.ok) throw new Error(result.error ?? "업체정보 글을 불러오지 못했습니다.");
       if (requestRef.current !== requestId) return;
       setPosts((current) => cursor ? [...current, ...(result.posts ?? [])] : result.posts ?? []);
       setNextCursor(result.nextCursor ?? null);
       setCanWrite(Boolean(result.canWrite));
       setAssignments(result.assignedRegions ?? []);
+      setJumpSummary(result.jumpSummary ?? null);
     } catch (error) { if (requestRef.current === requestId) showToast(error instanceof Error ? error.message : "업체정보 글을 불러오지 못했습니다."); }
     finally { if (requestRef.current === requestId) { if (cursor) setLoadingMore(false); else setLoading(false); } }
   }, [district, industry, region, search, showToast]);
@@ -1045,13 +1058,13 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
 
   const closeEditor = () => {
     if (editorBusy) return;
-    setWriting(false); setEditing(false); setWriteIndustry(""); setWriteArea(""); setWriteTitle(""); setWriteBody("");
+    setWriting(false); setEditing(false); setWriteIndustry(""); setWriteArea(""); setWriteTitle(""); setWriteTitleColor(""); setWriteBody("");
   };
   const openWrite = () => {
     if (!viewerKey) { onLoginRequired(); showToast("로그인 후 업체정보 글을 작성할 수 있습니다."); return; }
     if (!canWrite) { showToast("업체정보 글은 실장 계정만 작성할 수 있습니다."); return; }
     setSelected(null); setEditing(false); setWriting(true);
-    setWriteIndustry(industry === "전체" ? "" : industry); setWriteArea(""); setWriteTitle(""); setWriteBody("");
+    setWriteIndustry(industry === "전체" ? "" : industry); setWriteArea(""); setWriteTitle(""); setWriteTitleColor(""); setWriteBody("");
   };
   const openPost = async (post: VendorTextPost) => {
     try {
@@ -1063,7 +1076,7 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
   };
   const beginEdit = () => {
     if (!selected?.canEdit) return;
-    setWriteIndustry(selected.industry); setWriteArea(`${selected.region}::${selected.district}`); setWriteTitle(selected.title); setWriteBody(selected.body); setEditing(true); setWriting(false);
+    setWriteIndustry(selected.industry); setWriteArea(`${selected.region}::${selected.district}`); setWriteTitle(selected.title); setWriteTitleColor(selected.titleColor || ""); setWriteBody(selected.body); setEditing(true); setWriting(false);
   };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1072,7 +1085,7 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
     setSubmitting(true);
     try {
       const endpoint = editing && selected ? `/api/vendor-posts/${selected.id}` : "/api/vendor-posts";
-      const response = await fetch(endpoint, { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ industry: writeIndustry, region: nextRegion, district: nextDistrict, title: writeTitle, body: writeBody }) });
+      const response = await fetch(endpoint, { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ industry: writeIndustry, region: nextRegion, district: nextDistrict, title: writeTitle, titleColor: writeTitleColor, body: writeBody }) });
       const result = await response.json() as { post?: VendorTextPost; error?: string };
       if (!response.ok || !result.post) throw new Error(result.error ?? "업체정보 글을 저장하지 못했습니다.");
       setSelected(result.post); setEditing(false); setWriting(false); showToast(editing ? "업체정보 글을 수정했습니다." : "업체정보 글을 등록했습니다."); await load();
@@ -1090,8 +1103,28 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
     } catch (error) { showToast(error instanceof Error ? error.message : "업체정보 글을 삭제하지 못했습니다."); }
     finally { setSubmitting(false); }
   };
+  const jumpToTop = async () => {
+    if (jumping) return;
+    if (!viewerKey) { onLoginRequired(); showToast("로그인 후 상단점프를 사용할 수 있습니다."); return; }
+    if (!canWrite || assignments.length === 0) { showToast("담당 상세지역이 있는 실장만 상단점프를 사용할 수 있습니다."); return; }
+    if ((jumpSummary?.remaining ?? 0) <= 0) { showToast("오늘 사용할 수 있는 상단점프 횟수를 모두 사용했습니다."); return; }
+    setJumping(true);
+    try {
+      const response = await fetch("/api/vendor-posts/jump", { method: "POST" });
+      const result = await response.json() as { jumpSummary?: VendorJumpSummary; error?: string };
+      if (!response.ok || !result.jumpSummary) throw new Error(result.error ?? "상단점프를 처리하지 못했습니다.");
+      setJumpSummary(result.jumpSummary);
+      showToast(`상단점프 완료 · ${result.jumpSummary.remaining}회 남았습니다.`);
+      await load();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "상단점프를 처리하지 못했습니다.");
+    } finally {
+      setJumping(false);
+    }
+  };
 
   const availableAssignments = assignments.filter((item) => !item.used);
+  const canJump = canWrite && assignments.length > 0;
   if (writing || editing) return <section className="vendor-text-board vendor-editor">
     <div className="vendor-board-title"><div><p>VENDOR BOARD</p><h2>{editing ? "업체정보 수정" : "업체정보 등록"}</h2></div><button type="button" onClick={closeEditor}>목록</button></div>
     <form onSubmit={submit}>
@@ -1102,13 +1135,14 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
         {!editing && assignments.length > 0 && availableAssignments.length === 0 && <p className="vendor-assignment-empty">배정된 모든 상세지역에 글을 등록했습니다.</p>}
       </fieldset>
       <input className="vendor-title-input" value={writeTitle} onChange={(event) => setWriteTitle(event.target.value)} minLength={2} maxLength={80} placeholder="업체정보 제목을 입력해 주세요." required />
+      <TitleColorPicker value={writeTitleColor} onChange={setWriteTitleColor} />
       <RichTextEditor name="vendorBody" value={writeBody} onChange={setWriteBody} onBusyChange={setEditorBusy} allowPoll={false} placeholder="업체 소개와 안내 내용을 입력해 주세요." />
       <div className="vendor-editor-actions"><button type="button" disabled={editorBusy} onClick={closeEditor}>취소</button><button type="submit" disabled={submitting || editorBusy || !writeIndustry || !writeArea || !writeTitle.trim()}>{editorBusy ? "첨부 중…" : submitting ? "저장 중…" : editing ? "수정 완료" : "등록"}</button></div>
     </form>
   </section>;
 
   if (selected) return <section className="vendor-text-board vendor-detail">
-    <div className="vendor-board-title"><div><p>VENDOR BOARD</p><h2>{selected.title}</h2></div><button type="button" onClick={() => setSelected(null)}>목록</button></div>
+    <div className="vendor-board-title"><div><p>VENDOR BOARD</p><h2><PostTitleText title={selected.title} titleColor={selected.titleColor} /></h2></div><button type="button" onClick={() => setSelected(null)}>목록</button></div>
     <div className="vendor-detail-meta"><span>{selected.industry}</span><span>{selected.region}</span><span>{selected.district}</span><small>Lv.{selected.authorLevel} {selected.author} · {formatPostTime(selected.updatedAt)}</small></div>
     <div className="rich-post-body" dangerouslySetInnerHTML={{ __html: renderRichBody(selected.body) }} />
     <div className="vendor-detail-actions">{selected.canEdit && <button type="button" onClick={beginEdit}>수정</button>}{selected.canDelete && <button type="button" className="danger" disabled={submitting} onClick={() => void remove()}>삭제</button>}<button type="button" onClick={() => setSelected(null)}>목록</button></div>
@@ -1119,25 +1153,33 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
       <div><p>VENDOR BOARD</p><h2>{search ? `“${search}” 검색 결과` : "지역별 업체정보"}</h2></div>
       <div className="vendor-board-actions">
         {search && <button type="button" onClick={onClearSearch}>전체 목록</button>}
+        {canJump && <div className="vendor-jump-tools">
+          <button type="button" className="jump" disabled={jumping || (jumpSummary?.remaining ?? 0) <= 0} onClick={() => void jumpToTop()}>{jumping ? "상단점프 중…" : `상단점프 ${jumpSummary?.remaining ?? 0}회`}</button>
+          <small>{jumpSummary?.resetText ?? "00시00분에 새롭게 갱신 됩니다"}</small>
+        </div>}
         {canWrite && <button type="button" className="write" onClick={openWrite}>글쓰기</button>}
       </div>
     </div>
     <div className="vendor-board-table" role="table" aria-label="지역별 업체정보 목록">
       <div className="vendor-board-head" role="row"><span role="columnheader">업종</span><span role="columnheader">지역</span><span role="columnheader">상세</span><b role="columnheader">제목</b></div>
-      <div className="vendor-board-list">{loading ? <p className="vendor-board-empty">불러오는 중…</p> : posts.length ? posts.map((post) => <button type="button" className="vendor-board-row" aria-label={`${post.industry} ${post.region} ${post.district} ${post.title} 업체정보 보기`} key={post.id} onClick={() => void openPost(post)}><span>{post.industry}</span><span>{post.region}</span><span>{post.district}</span><span className="vendor-board-subject">{post.title}</span></button>) : <p className="vendor-board-empty">{search ? "검색 조건에 맞는 업체정보 글이 없습니다." : "조건에 맞는 업체정보 글이 없습니다."}</p>}</div>
+      <div className="vendor-board-list">{loading ? <p className="vendor-board-empty">불러오는 중…</p> : posts.length ? posts.map((post) => <button type="button" className="vendor-board-row" aria-label={`${post.industry} ${post.region} ${post.district} ${post.title} 업체정보 보기`} key={post.id} onClick={() => void openPost(post)}><span>{post.industry}</span><span>{post.region}</span><span>{post.district}</span><span className="vendor-board-subject"><PostTitleText title={post.title} titleColor={post.titleColor} /></span></button>) : <p className="vendor-board-empty">{search ? "검색 조건에 맞는 업체정보 글이 없습니다." : "조건에 맞는 업체정보 글이 없습니다."}</p>}</div>
     </div>
     {nextCursor && <button className="vendor-board-more" type="button" disabled={loadingMore} onClick={() => void load(nextCursor)}>{loadingMore ? "불러오는 중…" : "이전 업체정보 더보기"}</button>}
   </section>;
 }
 
-function CommunityPostTitle({ category, title, tags }: { category: string; title: string; tags?: readonly CommunityTag[] }) {
-  if (!isCommunityBoardCategory(category)) return <>{title}</>;
+function PostTitleText({ title, titleColor }: { title: string; titleColor?: string }) {
+  return <span className="post-title-text" style={titleColor ? { color: titleColor } : undefined}>{title}</span>;
+}
+
+function CommunityPostTitle({ category, title, titleColor, tags }: { category: string; title: string; titleColor?: string; tags?: readonly CommunityTag[] }) {
+  if (!isCommunityBoardCategory(category)) return <PostTitleText title={title} titleColor={titleColor} />;
   const visibleTags = tags?.length ? tags : (["일상"] as const);
-  return <><span className="community-title-tags" aria-label={`머릿글 ${visibleTags.join(", ")}`}>{visibleTags.map((tag) => `[${tag}]`).join(" ")}</span>{title}</>;
+  return <><span className="community-title-tags" aria-label={`머릿글 ${visibleTags.join(", ")}`}>{visibleTags.map((tag) => `[${tag}]`).join(" ")}</span><PostTitleText title={title} titleColor={titleColor} /></>;
 }
 
 function BoardPreview({ kind, title, posts, onMore }: { kind: BoardKind; title: string; posts: ReturnType<typeof boardPosts>; onMore: () => void }) {
-  return <section className="board-card"><div className="section-heading compact"><h2>{title}</h2><button onClick={onMore}>더보기 <span>›</span></button></div><div className="preview-posts">{posts.map((post, index) => <button key={post.id} onClick={onMore}><span className={`post-mark ${index === 0 ? "hot" : ""}`}>{index === 0 ? "HOT" : String(index + 1).padStart(2, "0")}</span><b><CommunityPostTitle category={kind} title={post.title} tags={post.communityTags} /></b><small>{post.time}</small></button>)}</div></section>;
+  return <section className="board-card"><div className="section-heading compact"><h2>{title}</h2><button onClick={onMore}>더보기 <span>›</span></button></div><div className="preview-posts">{posts.map((post, index) => <button key={post.id} onClick={onMore}><span className={`post-mark ${index === 0 ? "hot" : ""}`}>{index === 0 ? "HOT" : String(index + 1).padStart(2, "0")}</span><b><CommunityPostTitle category={kind} title={post.title} titleColor={post.titleColor} tags={post.communityTags} /></b><small>{post.time}</small></button>)}</div></section>;
 }
 
 function formatPostTime(createdAt: string) {
@@ -1302,7 +1344,7 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
     setFilter(nextFilter);
   };
   const toDisplayPost = (post: LivePost): BoardDisplayPost => ({
-    id: post.id, title: post.title, body: post.body, communityTags: post.communityTags, author: post.author, authorLevel: post.authorLevel,
+    id: post.id, title: post.title, titleColor: post.titleColor || "", body: post.body, communityTags: post.communityTags, author: post.author, authorLevel: post.authorLevel,
     time: formatPostTime(post.createdAt), views: post.views, likes: post.likes, dislikes: post.dislikes ?? 0,
     reportCount: post.reportCount ?? 0, isNotice: Boolean(post.isNotice), isPinned: Boolean(post.isPinned), commentCount: post.commentCount ?? 0,
     isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete, createdAt: post.createdAt, live: true,
@@ -1331,6 +1373,7 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
     setPopularLivePosts((current) => current?.map((item) => item.id === post.id ? {
       ...item,
       title: post.title,
+      titleColor: post.titleColor,
       body: post.body,
       communityTags: post.communityTags,
       views: post.views,
@@ -1382,7 +1425,7 @@ function BoardList({ kind, posts, totalPosts, pageStart, filter, loading, onFilt
     <div className="forum-table" role="table" aria-label={`${boardLabels[kind]} 글 목록`} aria-busy={loading}>
       <div className="forum-row forum-head" role="row"><span>번호</span><b>제목</b><span>글쓴이</span><span>작성일</span><span>조회</span><span>추천</span><span>비추천</span></div>
       {posts.map((post, index) => <button type="button" className="forum-row" key={post.id} onClick={() => onOpen(post)}>
-        <span>{post.isPinned ? <em className="pinned-mark">고정</em> : post.isNotice ? <em className="notice-mark">공지</em> : post.live ? "NEW" : totalPosts - pageStart - index}</span><b><CommunityPostTitle category={kind} title={post.title} tags={post.communityTags} />{post.commentCount > 0 && <em>[{post.commentCount}]</em>}<small>{formatPostAuthor(post)} · {post.time}</small></b><span>{formatPostAuthor(post)}</span><span>{post.time}</span><span>{post.views}</span><span>{post.likes}</span><span>{post.dislikes}</span>
+        <span>{kind === "notices" ? totalPosts - pageStart - index : post.isPinned ? <em className="pinned-mark">고정</em> : post.isNotice ? <em className="notice-mark">공지</em> : post.live ? "NEW" : totalPosts - pageStart - index}</span><b><CommunityPostTitle category={kind} title={post.title} titleColor={post.titleColor} tags={post.communityTags} />{post.commentCount > 0 && <em>[{post.commentCount}]</em>}<small>{formatPostAuthor(post)} · {post.time}</small></b><span>{formatPostAuthor(post)}</span><span>{post.time}</span><span>{post.views}</span><span>{post.likes}</span><span>{post.dislikes}</span>
       </button>)}
       {loading && posts.length === 0 ? <div className="forum-empty">최근 7일 인기글을 불러오는 중입니다.</div> : posts.length === 0 && <div className="forum-empty">조건에 맞는 게시글이 없습니다.</div>}
     </div>
@@ -1408,14 +1451,28 @@ function CommunityTagPicker({ value, onChange }: { value: readonly CommunityTag[
   </fieldset>;
 }
 
+function TitleColorPicker({ value, onChange }: { value: TitleColor; onChange: (color: TitleColor) => void }) {
+  return <fieldset className="title-color-picker">
+    <legend>제목 색상</legend>
+    <div className="title-color-options">
+      {TITLE_COLOR_OPTIONS.map((option) => <label className={value === option.value ? "selected" : ""} key={option.label}>
+        <input type="radio" name="titleColor" value={option.value} checked={value === option.value} onChange={() => onChange(option.value)} />
+        <span><i style={{ background: option.value || "#111111" }} />{option.label}</span>
+      </label>)}
+    </div>
+  </fieldset>;
+}
+
 function BoardWritePage({ kind, viewer, onCancel, onSubmit, submitting }: { kind: BoardKind; viewer: Viewer | null; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; submitting: boolean }) {
   const [body, setBody] = useState("");
   const [editorBusy, setEditorBusy] = useState(false);
   const [communityTags, setCommunityTags] = useState<CommunityTag[]>([]);
+  const [titleColor, setTitleColor] = useState<TitleColor>("");
   return <form className="forum-write" onSubmit={(event) => { if (editorBusy) { event.preventDefault(); return; } onSubmit(event); }}>
     <div className="forum-write-title"><strong>{boardLabels[kind]} 글쓰기</strong><span>건강한 게시판 문화를 함께 만들어 주세요.</span></div>
     {isCommunityBoardCategory(kind) && <CommunityTagPicker value={communityTags} onChange={setCommunityTags} />}
     <input className="forum-title-input" name="title" required minLength={2} maxLength={80} autoFocus placeholder="제목을 입력해 주세요." />
+    <TitleColorPicker value={titleColor} onChange={setTitleColor} />
     {viewer?.level === 10 && (kind === "community" || kind === "reviews") && <label className="forum-pin-option"><input type="checkbox" name="isPinned" /> <span><b>상단 고정</b><small>체크하면 게시판 최상단에 고정됩니다.</small></span></label>}
     <RichTextEditor name="body" value={body} onChange={setBody} onBusyChange={setEditorBusy} placeholder="내용을 입력해 주세요." />
     <div className="forum-write-actions"><button type="button" disabled={editorBusy} onClick={onCancel}>취소</button><button type="submit" disabled={submitting || editorBusy}>{editorBusy ? "첨부 중…" : submitting ? "등록 중…" : "등록"}</button></div>
@@ -1433,6 +1490,7 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
   const [poll, setPoll] = useState<PostPoll | null>(null);
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(initialPost.title);
+  const [editTitleColor, setEditTitleColor] = useState<TitleColor>((initialPost.titleColor || "") as TitleColor);
   const [editBody, setEditBody] = useState(initialPost.body);
   const [editBusy, setEditBusy] = useState(false);
   const [editPinned, setEditPinned] = useState(Boolean(initialPost.isPinned));
@@ -1448,6 +1506,7 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
       const next = { ...initialPost, ...result.post, time: formatPostTime(result.post.createdAt), live: true };
       setPost(next);
       setEditTitle(next.title);
+      setEditTitleColor((next.titleColor || "") as TitleColor);
       setEditBody(next.body);
       setEditPinned(Boolean(next.isPinned));
       setEditCommunityTags(next.communityTags);
@@ -1513,13 +1572,14 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
       const response = await fetch(`/api/posts/${post.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: editTitle, body: editBody, isPinned: editPinned, ...(isCommunityBoardCategory(kind) ? { communityTags: editCommunityTags } : {}) }),
+        body: JSON.stringify({ title: editTitle, titleColor: editTitleColor, body: editBody, isPinned: editPinned, ...(isCommunityBoardCategory(kind) ? { communityTags: editCommunityTags } : {}) }),
       });
       const result = await response.json() as { post?: LivePost; error?: string };
       if (!response.ok || !result.post) throw new Error(result.error ?? "게시글을 수정하지 못했습니다.");
       const next = { ...post, ...result.post, time: formatPostTime(result.post.createdAt), live: true };
       setPost(next);
       setEditTitle(next.title);
+      setEditTitleColor((next.titleColor || "") as TitleColor);
       setEditBody(next.body);
       setEditPinned(Boolean(next.isPinned));
       setEditCommunityTags(next.communityTags);
@@ -1555,13 +1615,14 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
       <div className="forum-write-title"><strong>{boardLabels[kind]} 글 수정</strong><span>수정 권한은 작성자와 관리자에게만 있습니다.</span></div>
       {isCommunityBoardCategory(kind) && <CommunityTagPicker value={editCommunityTags} onChange={setEditCommunityTags} />}
       <input className="forum-title-input" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} required minLength={2} maxLength={80} autoFocus aria-label="게시글 제목" />
+      <TitleColorPicker value={editTitleColor} onChange={setEditTitleColor} />
       {(post.canPin || viewer?.level === 10) && (kind === "community" || kind === "reviews") && <label className="forum-pin-option"><input type="checkbox" checked={editPinned} onChange={(event) => setEditPinned(event.target.checked)} /> <span><b>상단 고정</b><small>체크하면 게시판 최상단에 고정됩니다.</small></span></label>}
       <RichTextEditor name="body" value={editBody} onChange={setEditBody} onBusyChange={setEditBusy} placeholder="내용을 입력해 주세요." />
-      <div className="forum-write-actions"><button type="button" disabled={editBusy} onClick={() => { setEditTitle(post.title); setEditBody(post.body); setEditPinned(Boolean(post.isPinned)); setEditCommunityTags(post.communityTags); setEditing(false); }}>취소</button><button type="submit" disabled={actionSubmitting || editBusy}>{editBusy ? "첨부 중…" : actionSubmitting ? "수정 중…" : "수정 완료"}</button></div>
+      <div className="forum-write-actions"><button type="button" disabled={editBusy} onClick={() => { setEditTitle(post.title); setEditTitleColor((post.titleColor || "") as TitleColor); setEditBody(post.body); setEditPinned(Boolean(post.isPinned)); setEditCommunityTags(post.communityTags); setEditing(false); }}>취소</button><button type="submit" disabled={actionSubmitting || editBusy}>{editBusy ? "첨부 중…" : actionSubmitting ? "수정 중…" : "수정 완료"}</button></div>
     </form>
   </article>;
   return <article className="forum-detail">
-    <header><h2><CommunityPostTitle category={kind} title={post.title} tags={post.communityTags} /></h2><div><span>{formatPostAuthor(post)}</span><span>{post.createdAt ? new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(post.createdAt)) : post.time}</span><span>조회 {post.views}</span><span>추천 {post.likes}</span><span>비추천 {post.dislikes}</span><span>신고 {post.reportCount}</span><span>댓글 {post.commentCount}</span></div></header>
+    <header><h2><CommunityPostTitle category={kind} title={post.title} titleColor={post.titleColor} tags={post.communityTags} /></h2><div><span>{formatPostAuthor(post)}</span><span>{post.createdAt ? new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(post.createdAt)) : post.time}</span><span>조회 {post.views}</span><span>추천 {post.likes}</span><span>비추천 {post.dislikes}</span><span>신고 {post.reportCount}</span><span>댓글 {post.commentCount}</span></div></header>
     <PostRichBody body={post.body} poll={poll} viewer={viewer} postId={typeof post.id === "number" ? post.id : null} onLoginRequired={onLoginRequired} showToast={showToast} />
     <div className="forum-detail-actions">
       <div className="forum-vote-actions"><button type="button" disabled={actionSubmitting || post.isOwn || post.author === viewer?.nickname} onClick={() => void vote("up")} title={post.isOwn || post.author === viewer?.nickname ? "본인 글에는 투표할 수 없습니다." : undefined}><strong>추천</strong><span>{post.likes}</span></button><button type="button" disabled={actionSubmitting || post.isOwn || post.author === viewer?.nickname} onClick={() => void vote("down")} title={post.isOwn || post.author === viewer?.nickname ? "본인 글에는 투표할 수 없습니다." : undefined}><strong>비추천</strong><span>{post.dislikes}</span></button></div>

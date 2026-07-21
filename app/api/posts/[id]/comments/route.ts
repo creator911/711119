@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { memberFromSession } from "../../../../lib/member-auth";
+import { refreshAutomaticMemberLevel } from "../../../../lib/member-level-progress";
 
 const parsePostId = (request: Request) => {
   const segments = new URL(request.url).pathname.split("/").filter(Boolean);
@@ -23,7 +24,13 @@ export async function POST(request: Request) {
     const inserted = await env.DB.prepare(`
       INSERT INTO post_comments(post_id,user_id,body,status,created_at) VALUES(?,?,?,'published',?)
     `).bind(postId, user.id, body, createdAt).run();
-    return Response.json({ comment: { id: inserted.meta.last_row_id, body, author: user.nickname, authorLevel: user.level, createdAt } }, { status: 201 });
+    let authorLevel = user.level;
+    try {
+      authorLevel = await refreshAutomaticMemberLevel(env.DB, user.id);
+    } catch (levelError) {
+      console.error("Automatic member level refresh failed", levelError);
+    }
+    return Response.json({ comment: { id: inserted.meta.last_row_id, body, author: user.nickname, authorLevel, createdAt } }, { status: 201 });
   } catch (error) {
     console.error("Comment creation failed", error);
     return Response.json({ error: "댓글을 저장하지 못했습니다." }, { status: 500 });

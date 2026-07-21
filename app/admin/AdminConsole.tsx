@@ -7,6 +7,7 @@ import AdminSupport from "./AdminSupport";
 import RichTextEditor from "../components/RichTextEditor";
 import { normalizeAdminMemberFlags } from "../lib/admin-member-flags";
 import { vendorRegionGroups } from "../lib/vendor-regions";
+import { TITLE_COLOR_OPTIONS, type TitleColor } from "../lib/title-colors";
 
 type Member = {
   id: number;
@@ -16,13 +17,14 @@ type Member = {
   firstLoginIp: string | null;
   points: number;
   level: number;
+  levelLocked: boolean;
   isDirector: boolean;
   isPartner: boolean;
   status: "active" | "suspended";
   createdAt: string;
 };
 
-type Post = { id: number; category: string; title: string; author: string; views: number; likes: number; isNotice: boolean; status: string; createdAt: string };
+type Post = { id: number; category: string; title: string; titleColor: TitleColor; author: string; views: number; likes: number; isNotice: boolean; status: string; createdAt: string };
 type BlockedIp = { ip: string; reason: string; createdAt: string };
 type DirectorRegion = { userId: number; region: string; district: string };
 type DirectorMember = Pick<Member, "id" | "username" | "nickname" | "level" | "status">;
@@ -283,7 +285,7 @@ export default function AdminConsole() {
     await loadOverview();
   };
 
-  const publishAdminPost = async (payload: { category: "notices" | "events"; title: string; body: string }, mode: "events" | "notices") => {
+  const publishAdminPost = async (payload: AdminPostPayload, mode: "events" | "notices") => {
     if (publishingKind) return false;
     setPublishingKind(mode);
     try {
@@ -412,7 +414,7 @@ export default function AdminConsole() {
     <main className="admin-main">
       <header><div><p>CONTROL CENTER</p><h1>{adminTitles[tab]}</h1></div><div className="admin-top-actions"><span><i /> 시스템 정상</span><Link href="/">사이트 보기 ↗</Link><button onClick={logout}>로그아웃</button></div></header>
       <section className="admin-stats"><article><span>오늘 가입</span><b>{overview.stats.todayMembers.toLocaleString()}</b><small>오늘 00시 기준</small></article><article><span>활성 회원</span><b>{overview.stats.activeMembers.toLocaleString()}</b><small>전체 {overview.stats.totalMembers.toLocaleString()}명</small></article><article><span>오늘 게시글</span><b>{overview.stats.todayPosts.toLocaleString()}</b><small>실제 등록 데이터</small></article><article><span>오늘 출석</span><b>{overview.stats.todayAttendance.toLocaleString()}</b><small>회원당 50P 자동 적립</small></article></section>
-      {tab === "posts" && <section className="admin-panel"><div className="panel-title"><div><h2>최신 등록글</h2><p>실제 데이터베이스에 저장된 게시글만 표시됩니다.</p></div><button onClick={() => void loadOverview()}>새로고침</button></div><div className="admin-table posts-table"><div className="admin-tr head"><span>테마</span><b>제목</b><span>작성자</span><span>작성 시각</span><span>상태</span><span>조회·추천</span></div>{overview.posts.length ? overview.posts.map((post) => <div className="admin-tr" key={post.id}><span><em>{post.category}</em></span><b>{post.title}</b><span>{post.author}</span><span>{formatDate(post.createdAt)}</span><span><i className="green-dot" /> {post.status === "published" ? "공개" : "숨김"}</span><span>{post.views.toLocaleString()} · {post.likes.toLocaleString()}</span></div>) : <p className="admin-empty">아직 데이터베이스에 등록된 게시글이 없습니다.</p>}</div></section>}
+      {tab === "posts" && <section className="admin-panel"><div className="panel-title"><div><h2>최신 등록글</h2><p>실제 데이터베이스에 저장된 게시글만 표시됩니다.</p></div><button onClick={() => void loadOverview()}>새로고침</button></div><div className="admin-table posts-table"><div className="admin-tr head"><span>테마</span><b>제목</b><span>작성자</span><span>작성 시각</span><span>상태</span><span>조회·추천</span></div>{overview.posts.length ? overview.posts.map((post) => <div className="admin-tr" key={post.id}><span><em>{post.category}</em></span><b style={post.titleColor ? { color: post.titleColor } : undefined}>{post.title}</b><span>{post.author}</span><span>{formatDate(post.createdAt)}</span><span><i className="green-dot" /> {post.status === "published" ? "공개" : "숨김"}</span><span>{post.views.toLocaleString()} · {post.likes.toLocaleString()}</span></div>) : <p className="admin-empty">아직 데이터베이스에 등록된 게시글이 없습니다.</p>}</div></section>}
       {tab === "events" && <section className="event-admin-grid"><AdminBoardEditor mode="events" submitting={publishingKind === "events"} onPublish={(payload) => publishAdminPost(payload, "events")} /><AdminPostList title="최근 이벤트" description="관리자가 등록한 이벤트 게시글입니다." posts={eventPosts} onRefresh={() => void loadOverview()} /></section>}
       {tab === "notices" && <section className="event-admin-grid"><AdminBoardEditor mode="notices" submitting={publishingKind === "notices"} onPublish={(payload) => publishAdminPost(payload, "notices")} /><AdminPostList title="최근 공지" description="공지사항 대메뉴에 노출되는 운영 공지글입니다." posts={noticePosts} onRefresh={() => void loadOverview()} /></section>}
       {tab === "shop" && <AdminShop onChanged={() => void loadOverview(true)} />}
@@ -425,7 +427,7 @@ export default function AdminConsole() {
             return <div className={`admin-tr ${protectedAdmin ? "protected-admin" : ""}`} key={member.id}>
               <b>{member.username}</b>
               <span><input value={member.nickname} maxLength={12} disabled={protectedAdmin} onChange={(event) => changeMember(member.id, { nickname: event.target.value })} /></span>
-              <span className="level-control"><b>Lv.</b><input type="number" min="1" max={overview.operator.canManageAdmins ? 10 : 9} value={member.level} disabled={protectedAdmin} aria-label={`${member.nickname} 레벨`} onChange={(event) => changeMember(member.id, { level: Math.max(1, Math.min(overview.operator.canManageAdmins ? 10 : 9, Number(event.target.value))) })} /></span>
+              <span className="level-control"><b>Lv.</b><input type="number" min="1" max={overview.operator.canManageAdmins ? 10 : 9} value={member.level} disabled={protectedAdmin} aria-label={`${member.nickname} 레벨`} onChange={(event) => changeMember(member.id, { level: Math.max(1, Math.min(overview.operator.canManageAdmins ? 10 : 9, Number(event.target.value))) })} />{member.levelLocked && <i title="관리자가 직접 지정한 고정 레벨입니다.">고정</i>}</span>
               <span title={member.firstLoginIp ? `최초 로그인 ${member.firstLoginIp}` : "로그인 기록 없음"}>{member.signupIp}</span>
               <span><input type="number" min="0" max="1000000000" value={member.points} disabled={protectedAdmin} onChange={(event) => changeMember(member.id, { points: Number(event.target.value) })} /></span>
               <span>{formatDate(member.createdAt)}</span>
@@ -517,24 +519,27 @@ export default function AdminConsole() {
   </div>;
 }
 
-type AdminPostPayload = { category: "notices" | "events"; title: string; body: string };
+type AdminPostPayload = { category: "notices" | "events"; title: string; titleColor: TitleColor; authorName: string; body: string };
 
 function AdminBoardEditor({ mode, submitting, onPublish }: { mode: "events" | "notices"; submitting: boolean; onPublish: (payload: AdminPostPayload) => Promise<boolean> }) {
   const [body, setBody] = useState("");
   const [editorBusy, setEditorBusy] = useState(false);
+  const [titleColor, setTitleColor] = useState<TitleColor>("");
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submitting || editorBusy) return;
     const form = event.currentTarget;
     const data = new FormData(form);
     const category = mode === "events" ? "events" : "notices";
-    const saved = await onPublish({ category, title: String(data.get("title") ?? ""), body });
-    if (saved) { form.reset(); setBody(""); }
+    const saved = await onPublish({ category, title: String(data.get("title") ?? ""), titleColor, authorName: String(data.get("authorName") ?? ""), body });
+    if (saved) { form.reset(); setTitleColor(""); setBody(""); }
   };
   return <form className="admin-panel admin-board-editor" onSubmit={submit}>
     <div className="panel-title"><div><h2>{mode === "events" ? "새 이벤트 작성" : "새 공지 작성"}</h2><p>{mode === "events" ? "등록 즉시 이벤트 게시판에 공개됩니다." : "선택한 게시판 상단에 공지로 고정됩니다."}</p></div></div>
     <div className="admin-editor-fields">
       <label>{mode === "events" ? "이벤트 제목" : "공지 제목"}<input name="title" required minLength={2} maxLength={80} placeholder="제목을 입력하세요." /></label>
+      <label>작성자<input name="authorName" required minLength={1} maxLength={20} defaultValue="운영팀" placeholder="예: 운영팀" /></label>
+      <AdminTitleColorPicker value={titleColor} onChange={setTitleColor} />
       <RichTextEditor name="body" value={body} onChange={setBody} onBusyChange={setEditorBusy} compact placeholder={mode === "events" ? "혜택, 기간, 참여 방법 등 자세한 내용을 입력하세요." : "공지 내용을 입력하세요."} />
       <div className="admin-editor-note"><span>개인정보 노출과 불법 정보가 포함되지 않았는지 확인해 주세요.</span><b>저장 전 자동 정리됩니다.</b></div>
       <div className="admin-editor-actions"><button type="reset" disabled={editorBusy} onClick={() => setBody("")}>초기화</button><button type="submit" disabled={submitting || editorBusy}>{editorBusy ? "첨부 중…" : submitting ? "게시 중…" : mode === "events" ? "이벤트 게시" : "공지 게시"}</button></div>
@@ -542,7 +547,19 @@ function AdminBoardEditor({ mode, submitting, onPublish }: { mode: "events" | "n
   </form>;
 }
 
+function AdminTitleColorPicker({ value, onChange }: { value: TitleColor; onChange: (color: TitleColor) => void }) {
+  return <fieldset className="admin-title-color-picker">
+    <legend>제목 색상</legend>
+    <div>
+      {TITLE_COLOR_OPTIONS.map((option) => <label className={value === option.value ? "selected" : ""} key={option.label}>
+        <input type="radio" name="titleColor" value={option.value} checked={value === option.value} onChange={() => onChange(option.value)} />
+        <span><i style={{ background: option.value || "#111111" }} />{option.label}</span>
+      </label>)}
+    </div>
+  </fieldset>;
+}
+
 function AdminPostList({ title, description, posts, onRefresh }: { title: string; description: string; posts: Post[]; onRefresh: () => void }) {
   const categoryLabels: Record<string, string> = { notices: "공지사항", events: "이벤트", reviews: "후기", gifs: "커뮤니티", community: "커뮤니티" };
-  return <section className="admin-panel"><div className="panel-title"><div><h2>{title}</h2><p>{description}</p></div><button onClick={onRefresh}>새로고침</button></div><div className="event-list">{posts.length ? posts.map((post) => <article key={post.id}><div><b>{post.isNotice && <em className="admin-notice-badge">공지</em>}{post.title}</b><span>{categoryLabels[post.category] ?? post.category} · {formatDate(post.createdAt)} · {post.author}</span></div><em>{post.status === "published" ? "공개" : "숨김"}</em></article>) : <p className="admin-empty">아직 등록된 게시글이 없습니다.</p>}</div></section>;
+  return <section className="admin-panel"><div className="panel-title"><div><h2>{title}</h2><p>{description}</p></div><button onClick={onRefresh}>새로고침</button></div><div className="event-list">{posts.length ? posts.map((post) => <article key={post.id}><div><b>{post.isNotice && <em className="admin-notice-badge">공지</em>}<span style={post.titleColor ? { color: post.titleColor } : undefined}>{post.title}</span></b><span>{categoryLabels[post.category] ?? post.category} · {formatDate(post.createdAt)} · {post.author}</span></div><em>{post.status === "published" ? "공개" : "숨김"}</em></article>) : <p className="admin-empty">아직 등록된 게시글이 없습니다.</p>}</div></section>;
 }

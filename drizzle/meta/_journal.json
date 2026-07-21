@@ -190,6 +190,34 @@
       "when": 1784631895814,
       "tag": "0026_mighty_gravity",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1784634308684,
+      "tag": "0027_fair_mad_thinker",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1784635144295,
+      "tag": "0028_early_monster_badoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1784635750931,
+      "tag": "0029_shallow_dexter_bennett",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1784640000000,
+      "tag": "0030_member_level_lock",
+      "breakpoints": true
     }
   ]
 }

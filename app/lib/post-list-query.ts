@@ -22,8 +22,8 @@ export function buildPostListQuery(category: PostListCategory, sort: PostListSor
   return {
     bindings,
     sql: `
-      SELECT p.id,p.category,p.title,p.body,p.views,p.likes,p.dislikes,p.report_count AS reportCount,p.is_notice AS isNotice,p.is_pinned AS isPinned,p.community_tag_mask AS communityTagMask,p.created_at AS createdAt,
-             CASE WHEN u.nickname IS NULL THEN '운영자' ELSE u.nickname END AS author,
+      SELECT p.id,p.category,p.title,p.title_color AS titleColor,p.body,p.views,p.likes,p.dislikes,p.report_count AS reportCount,p.is_notice AS isNotice,p.is_pinned AS isPinned,p.community_tag_mask AS communityTagMask,p.created_at AS createdAt,
+             COALESCE(NULLIF(p.author_name,''),u.nickname,'운영자') AS author,
              COALESCE(u.level,0) AS authorLevel,
              (SELECT COUNT(*) FROM post_comments c WHERE c.post_id=p.id AND c.status='published') AS commentCount
       FROM posts p LEFT JOIN users u ON u.id = p.author_id
