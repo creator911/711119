@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up Nara001 database and media
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nara001-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

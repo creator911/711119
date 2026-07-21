@@ -1,0 +1,1 @@
+DROP INDEX `users_signup_ip_unique`;

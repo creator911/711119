@@ -1,0 +1,1 @@
+ALTER TABLE `posts` ADD `body` text DEFAULT '' NOT NULL;
