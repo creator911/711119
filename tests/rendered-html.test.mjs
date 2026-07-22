@@ -17,9 +17,16 @@ test("출장나라 메인 화면과 배포 산출물을 구성한다", async () 
   assert.match(portal, /원하는 지역과 업체를/);
   assert.doesNotMatch(portal, /믿을 수 있는 선택|업체 둘러보기/);
   assert.match(portal, /추천 업체/);
+  assert.doesNotMatch(portal, /추천 업체 4개/);
   assert.match(portal, /로그인/);
   assert.match(portal, /회원가입/);
   assert.doesNotMatch(page + layout + portal, /codex-preview|Your site is taking shape|Codex is working/i);
+});
+
+test("업체정보 실장 도구는 갱신 안내, 상단점프, 글쓰기 순으로 표시한다", async () => {
+  const portal = await readFile(new URL("../app/components/Portal.tsx", import.meta.url), "utf8");
+  assert.match(portal, /<div className="vendor-jump-tools">\s*<small>[^<]*00시00분에 새롭게 갱신 됩니다[^<]*<\/small>\s*<button[^>]*className="jump"/);
+  assert.match(portal, /<\/div>}\s*\{canWrite && <button[^>]*className="write"[^>]*>글쓰기<\/button>}/);
 });
 
 test("완성된 사이트에서 임시 미리보기 자산을 제거했다", async () => {

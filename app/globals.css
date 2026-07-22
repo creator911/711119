@@ -142,7 +142,6 @@ button { color:inherit; }
 .filter-bar .area-picker { width:100%; max-width:100%; min-width:0; }
 .filter-bar .area-major-row { width:100%; max-width:100%; }
 .filter-bar .area-major-row button:last-child { border-right:0; }
-.filter-bar>span { align-self:flex-end; color:#777; font-size:13px; line-height:1; white-space:nowrap; }
 .listing-page .vendor-grid { grid-template-columns:repeat(4,1fr); gap:18px; }
 .listing-page .vendor-image { height:170px; }
 .vendor-grid.featured-vendor-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
@@ -968,7 +967,6 @@ button { color:inherit; }
   .content-section { padding-top:21px; }
   .area-picker { border-radius:7px; }
   .filter-bar .area-picker,.filter-bar .area-major-row { width:100%; max-width:100%; }
-  .filter-bar>span { justify-self:end; }
   .vendor-category-picker { width:100%; }
   .vendor-category-row { display:flex; overflow-x:auto; scrollbar-width:none; }
   .vendor-category-row button { flex:0 0 auto; min-width:66px; height:44px; padding:0 13px; }

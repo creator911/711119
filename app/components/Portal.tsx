@@ -661,7 +661,6 @@ export default function Portal() {
                   onSelectRegion={selectRegion}
                   onSelectDistrict={setDistrict}
                 />
-                <span>추천 업체 4개</span>
               </div>
               <FeaturedVendorGrid posts={featuredVendors} loading={featuredLoading} onOpen={openFeaturedVendor} />
               <VendorTextBoard
@@ -1190,8 +1189,8 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
       <div className="vendor-board-actions">
         {search && <button type="button" onClick={onClearSearch}>전체 목록</button>}
         {canJump && <div className="vendor-jump-tools">
-          <button type="button" className="jump" disabled={jumping || (jumpSummary?.remaining ?? 0) <= 0} onClick={() => void jumpToTop()}>{jumping ? "상단점프 중…" : `상단점프 ${jumpSummary?.remaining ?? 0}회`}</button>
           <small>{jumpSummary?.resetText ?? "00시00분에 새롭게 갱신 됩니다"}</small>
+          <button type="button" className="jump" disabled={jumping || (jumpSummary?.remaining ?? 0) <= 0} onClick={() => void jumpToTop()}>{jumping ? "상단점프 중…" : `상단점프 ${jumpSummary?.remaining ?? 0}회`}</button>
         </div>}
         {canWrite && <button type="button" className="write" onClick={openWrite}>글쓰기</button>}
       </div>
