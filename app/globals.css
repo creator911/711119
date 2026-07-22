@@ -350,10 +350,9 @@ button { color:inherit; }
 .event-rank-row strong { color:#e24841; font-size:12px; }
 .event-rank-row.rank-1,.event-rank-row.rank-2,.event-rank-row.rank-3 { background:#fffdf8; }
 .event-rank-note { margin:0; border-top:1px solid #f0f0f0; padding:13px 2px 15px; color:#777; font-size:12px; line-height:1.55; }
-.event-posts-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin:36px 0 12px; border-bottom:2px solid #111; padding-bottom:12px; }
+.event-posts-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin:36px 0 0; border-bottom:2px solid #111; padding-bottom:12px; }
 .event-posts-heading .eyebrow { margin:0 0 6px; }
 .event-posts-heading h2 { margin:0; font-size:26px; letter-spacing:-.04em; }
-.event-posts-heading span { color:#777; font-size:12px; }
 .embedded-board-page.page-width { width:100%; min-height:0; padding:0; }
 
 .support-page .forum-heading { margin-bottom:18px; }

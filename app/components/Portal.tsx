@@ -1326,7 +1326,6 @@ function EventPage(props: BoardPageProps) {
     <div className="event-posts-heading">
       <p className="eyebrow">EVENT BOARD</p>
       <h2>진행 이벤트</h2>
-      <span>관리자가 등록한 이벤트 안내글입니다.</span>
     </div>
     <BoardPage {...props} hideHeading />
   </section>;
@@ -1457,7 +1456,7 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
 
 function BoardList({ kind, posts, totalPosts, pageStart, filter, loading, onFilter, onWrite, onOpen }: { kind: BoardKind; posts: BoardDisplayPost[]; totalPosts: number; pageStart: number; filter: "all" | "popular" | "notice"; loading: boolean; onFilter: (next: "all" | "popular" | "notice") => void; onWrite: () => void; onOpen: (post: BoardDisplayPost) => void }) {
   return <>
-    <div className="forum-toolbar"><div><button className={filter === "all" ? "selected" : ""} onClick={() => onFilter("all")}>전체글</button>{kind !== "events" && kind !== "notices" && <button className={filter === "popular" ? "selected" : ""} onClick={() => onFilter("popular")}>인기글</button>}</div>{kind !== "events" && kind !== "notices" && <button className="forum-write-button" onClick={onWrite}>글쓰기</button>}</div>
+    {kind !== "events" && <div className="forum-toolbar"><div><button className={filter === "all" ? "selected" : ""} onClick={() => onFilter("all")}>전체글</button>{kind !== "notices" && <button className={filter === "popular" ? "selected" : ""} onClick={() => onFilter("popular")}>인기글</button>}</div>{kind !== "notices" && <button className="forum-write-button" onClick={onWrite}>글쓰기</button>}</div>}
     <div className="forum-table" role="table" aria-label={`${boardLabels[kind]} 글 목록`} aria-busy={loading}>
       <div className="forum-row forum-head" role="row"><span>번호</span><b>제목</b><span>글쓴이</span><span>작성일</span><span>조회</span><span>추천</span><span>비추천</span></div>
       {posts.map((post, index) => <button type="button" className="forum-row" key={post.id} onClick={() => onOpen(post)}>
