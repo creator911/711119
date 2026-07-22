@@ -265,6 +265,7 @@ export const shopProducts = sqliteTable("shop_products", {
   description: text("description").notNull().default(""),
   price: integer("price").notNull(),
   stock: integer("stock").notNull().default(0),
+  minLevel: integer("min_level").notNull().default(1),
   fallbackImage: text("fallback_image").notNull().default(""),
   coverKey: text("cover_key"),
   status: text("status").notNull().default("active"),
@@ -274,6 +275,7 @@ export const shopProducts = sqliteTable("shop_products", {
 }, (table) => [
   check("shop_products_price_check", sql`${table.price} >= 0`),
   check("shop_products_stock_check", sql`${table.stock} >= 0`),
+  check("shop_products_min_level_check", sql`${table.minLevel} BETWEEN 1 AND 9`),
   check("shop_products_status_check", sql`${table.status} IN ('active','hidden')`),
   index("shop_products_status_id_idx").on(table.status, table.id),
 ]);

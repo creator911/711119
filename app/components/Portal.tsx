@@ -679,7 +679,7 @@ export default function Portal() {
           </section>
         ) : view === "shop" ? (
           <ShopPage
-            viewer={viewer ? { points } : null}
+            viewer={viewer ? { points, level: viewer.level } : null}
             onLoginRequired={() => { setModal("login"); showToast("로그인 후 포인트 상점을 이용할 수 있습니다."); }}
             onSessionExpired={() => { setViewer(null); setPoints(0); setAttended(false); setMyPage(null); setModal("login"); showToast("로그인이 만료되었습니다. 다시 로그인해 주세요."); }}
             onPointsChange={(nextPoints) => { setPoints(nextPoints); setViewer((current) => current ? { ...current, points: nextPoints } : current); setMyPage(null); }}

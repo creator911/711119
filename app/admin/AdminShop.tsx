@@ -8,6 +8,7 @@ export type AdminShopProduct = {
   description: string;
   price: number;
   stock: number;
+  minLevel: number;
   imageUrl: string;
   availableVouchers: number;
   pendingPurchases: number;
@@ -28,6 +29,7 @@ type ProductDraft = {
   description: string;
   price: string;
   stock: string;
+  minLevel: string;
   active: boolean;
   version: number;
 };
@@ -37,6 +39,7 @@ const draftOf = (product: AdminShopProduct): ProductDraft => ({
   description: product.description,
   price: String(product.price),
   stock: String(product.stock),
+  minLevel: String(product.minLevel),
   active: product.active,
   version: product.version,
 });
@@ -143,10 +146,12 @@ export default function AdminShop({ onChanged }: { onChanged: () => void }) {
     const name = draft.name.trim();
     const price = Number(draft.price);
     const stock = Number(draft.stock);
+    const minLevel = Number(draft.minLevel);
     if (name.length < 2 || name.length > 60) return setError("상품명은 2~60자로 입력해 주세요.");
     if (draft.description.trim().length > 160) return setError("상품 설명은 160자 이하로 입력해 주세요.");
     if (!Number.isSafeInteger(price) || price < 1 || price > 100_000_000) return setError("가격은 1~100,000,000P 사이의 정수로 입력해 주세요.");
     if (!Number.isSafeInteger(stock) || stock < 0 || stock > 1_000_000) return setError("판매수량은 0~1,000,000개 사이의 정수로 입력해 주세요.");
+    if (!Number.isSafeInteger(minLevel) || minLevel < 1 || minLevel > 9) return setError("이용 가능 레벨은 Lv.1~Lv.9 중에서 선택해 주세요.");
 
     setBusyId(selectedProduct.id);
     setBusyAction("save");
@@ -158,6 +163,7 @@ export default function AdminShop({ onChanged }: { onChanged: () => void }) {
       form.append("description", draft.description.trim());
       form.append("price", String(price));
       form.append("stock", String(stock));
+      form.append("minLevel", String(minLevel));
       form.append("active", String(draft.active));
       form.append("version", String(draft.version));
       form.append("expectedStock", String(selectedProduct.stock));
@@ -272,6 +278,7 @@ export default function AdminShop({ onChanged }: { onChanged: () => void }) {
             <span className="shop-product-thumbnail">{product.imageUrl ? <img src={product.imageUrl} alt={`${product.name} 대표사진`} /> : <span aria-hidden="true">NO IMAGE</span>}</span>
             <span className="shop-product-name"><b>{product.name}</b><small>{product.active ? "공개 중" : "숨김"}</small></span>
             <span><small>가격</small><b>{product.price.toLocaleString()}P</b></span>
+            <span><small>레벨 제한</small><b>Lv.{product.minLevel} 이상</b></span>
             <span className={stockEmpty || stockLow ? "low" : ""}><small>판매수량</small><b>{product.stock.toLocaleString()}개</b></span>
             <span className={vouchersEmpty || vouchersLow ? "low" : ""}><small>지급이미지</small><b>{product.availableVouchers.toLocaleString()}개</b></span>
             <span className="shop-product-toggle" aria-hidden="true">{expanded ? "접기 −" : "수정 +"}</span>
@@ -294,6 +301,7 @@ export default function AdminShop({ onChanged }: { onChanged: () => void }) {
                   <label>상품명<input value={draft.name} required minLength={2} maxLength={60} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
                   <label>가격(P)<input type="number" inputMode="numeric" min="1" max="100000000" step="1" required value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} /></label>
                   <label>판매수량<input type="number" inputMode="numeric" min="0" max="1000000" step="1" required value={draft.stock} onChange={(event) => setDraft({ ...draft, stock: event.target.value })} /></label>
+                  <label>이용 가능 레벨<select value={draft.minLevel} onChange={(event) => setDraft({ ...draft, minLevel: event.target.value })}>{Array.from({ length: 9 }, (_, index) => <option key={index + 1} value={index + 1}>Lv.{index + 1} 이상</option>)}</select></label>
                   <label className="shop-product-active"><input type="checkbox" checked={draft.active} onChange={(event) => setDraft({ ...draft, active: event.target.checked })} /><span>{draft.active ? "상품 공개" : "상품 숨김"}</span></label>
                   <label className="shop-product-description">상품 설명<textarea value={draft.description} maxLength={160} rows={5} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
                 </div>

@@ -232,6 +232,13 @@
       "when": 1784666309075,
       "tag": "0032_lively_vertigo",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1784713163328,
+      "tag": "0033_harsh_black_widow",
+      "breakpoints": true
     }
   ]
 }

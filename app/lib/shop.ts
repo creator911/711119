@@ -4,6 +4,7 @@ export type ShopProductRow = {
   description: string;
   price: number;
   stock: number;
+  minLevel: number;
   fallbackImage: string;
   coverKey: string | null;
   status: "active" | "hidden";
@@ -21,6 +22,7 @@ export type PublicShopProduct = {
   description: string;
   price: number;
   stock: number;
+  minLevel: number;
   imageUrl: string;
   availableVouchers: number;
   active: boolean;
@@ -30,7 +32,7 @@ export type PublicShopProduct = {
 type ShopDatabase = Pick<D1Database, "prepare" | "batch">;
 
 const productSelect = `
-  SELECT p.id,p.name,p.description,p.price,p.stock,p.fallback_image AS fallbackImage,
+  SELECT p.id,p.name,p.description,p.price,p.stock,p.min_level AS minLevel,p.fallback_image AS fallbackImage,
          p.cover_key AS coverKey,p.status,p.version,p.created_at AS createdAt,p.updated_at AS updatedAt,
          (SELECT COUNT(*) FROM shop_vouchers v WHERE v.product_id=p.id AND v.status='available') AS availableVouchers,
          (SELECT COUNT(*) FROM shop_purchases o WHERE o.product_id=p.id AND o.status='pending_delivery') AS pendingPurchases,
@@ -56,6 +58,7 @@ export function publicShopProduct(row: ShopProductRow): PublicShopProduct {
     description: row.description,
     price: Number(row.price),
     stock: Number(row.stock),
+    minLevel: Number(row.minLevel),
     imageUrl: row.coverKey ? `/api/shop/products/${row.id}/image?v=${row.version}` : row.fallbackImage,
     availableVouchers: Number(row.availableVouchers),
     active: row.status === "active",
@@ -146,6 +149,7 @@ export async function deliverPendingShopPurchases(database: ShopDatabase, produc
 export function shopErrorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("shop_points_insufficient")) return { status: 409, message: "보유 포인트가 부족합니다." };
+  if (message.includes("shop_level_insufficient")) return { status: 403, message: "상품 이용 가능 레벨에 도달하지 않았습니다." };
   if (message.includes("shop_stock_insufficient")) return { status: 409, message: "품절된 상품입니다." };
   if (message.includes("shop_product_unavailable") || message.includes("shop_product_changed")) return { status: 409, message: "상품 정보가 변경되었습니다. 새로고침 후 다시 시도해 주세요." };
   if (message.includes("shop_member_unavailable")) return { status: 403, message: "현재 계정으로 상품을 구매할 수 없습니다." };

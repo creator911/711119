@@ -8,6 +8,7 @@ export type ShopProduct = {
   description: string;
   price: number;
   stock: number;
+  minLevel: number;
   imageUrl: string | null;
   availableVouchers: number;
   active: boolean;
@@ -15,6 +16,7 @@ export type ShopProduct = {
 
 export type ShopViewer = {
   points: number;
+  level: number;
 };
 
 export type ShopPurchase = {
@@ -47,8 +49,8 @@ type ModalStage = "confirm" | "success";
 
 export const SHOP_PURCHASE_SUCCESS_MESSAGE = "상품을 구매 하셨습니다.\n고객센터에서 확인이 가능 합니다.\n혹시 확인이 되지 않으시면 고객센터로 문의 주세요.";
 
-function isAvailable(product: ShopProduct) {
-  return product.active && product.stock > 0;
+function isAvailable(product: ShopProduct, viewerLevel = 10) {
+  return product.active && product.stock > 0 && viewerLevel >= product.minLevel;
 }
 
 function errorMessage(error: unknown, fallback: string) {
@@ -188,7 +190,7 @@ export default function ShopPage({ viewer, onLoginRequired, onSessionExpired, on
       onLoginRequired();
       return;
     }
-    if (!isAvailable(product)) return;
+    if (!isAvailable(product, viewer.level)) return;
     purchaseTriggerRef.current = trigger;
     requestKeyRef.current = crypto.randomUUID();
     setPurchaseError("");
@@ -219,7 +221,7 @@ export default function ShopPage({ viewer, onLoginRequired, onSessionExpired, on
       onLoginRequired();
       return;
     }
-    if (!isAvailable(selectedProduct) || viewer.points < selectedProduct.price) return;
+    if (!isAvailable(selectedProduct, viewer.level) || viewer.points < selectedProduct.price) return;
 
     purchaseLockRef.current = true;
     setPurchasing(true);
@@ -268,17 +270,19 @@ export default function ShopPage({ viewer, onLoginRequired, onSessionExpired, on
       : loadError ? <div className="shop-state shop-error" role="alert"><p>{loadError}</p><button type="button" onClick={() => void loadProducts()}>다시 불러오기</button></div>
         : products.length ? <div className="shop-product-grid" aria-label="포인트 상품 목록">
           {products.map((product) => {
-            const available = isAvailable(product);
-            return <article className={`shop-product-card${available ? "" : " sold-out"}`} key={product.id}>
+            const inStock = product.active && product.stock > 0;
+            const levelAllowed = !viewer || viewer.level >= product.minLevel;
+            return <article className={`shop-product-card${inStock ? "" : " sold-out"}${levelAllowed ? "" : " level-locked"}`} key={product.id}>
               <div className="shop-product-image">
                 {product.imageUrl ? <img src={product.imageUrl} alt={`${product.name} 상품 이미지`} /> : <span aria-hidden="true">POINT SHOP</span>}
-                {!available && <em>품절</em>}
+                {!inStock && <em>품절</em>}
               </div>
               <div className="shop-product-content">
-                <span className="shop-product-stock">{available ? `남은 수량 ${product.stock.toLocaleString()}개` : "품절"}</span>
+                <span className="shop-product-stock">{inStock ? `남은 수량 ${product.stock.toLocaleString()}개` : "품절"}</span>
                 <h2>{product.name}</h2>
                 <p>{product.description}</p>
-                <div><strong>{product.price.toLocaleString()}P</strong><button type="button" disabled={!available} onClick={(event) => openPurchase(product, event.currentTarget)}>{available ? "구매하기" : "품절"}</button></div>
+                <span className="shop-product-level">Lv.{product.minLevel} 이상</span>
+                <div><strong>{product.price.toLocaleString()}P</strong><button type="button" disabled={!inStock || (!!viewer && !levelAllowed)} onClick={(event) => openPurchase(product, event.currentTarget)}>{!inStock ? "품절" : viewer && !levelAllowed ? "레벨 부족" : "구매하기"}</button></div>
               </div>
             </article>;
           })}
@@ -299,7 +303,7 @@ export default function ShopPage({ viewer, onLoginRequired, onSessionExpired, on
           </dl>
           {balance < selectedProduct.price && <p className="shop-purchase-warning" role="alert">포인트가 부족합니다.</p>}
           {purchaseError && <p className="shop-purchase-error" role="alert">{purchaseError}</p>}
-          <div className="shop-modal-actions"><button type="button" disabled={purchasing} onClick={closeConfirmation}>취소</button><button ref={confirmButtonRef} type="button" disabled={purchasing || balance < selectedProduct.price || !isAvailable(selectedProduct)} onClick={() => void purchase()}>{purchasing ? "구매 중…" : "구매 확인"}</button></div>
+          <div className="shop-modal-actions"><button type="button" disabled={purchasing} onClick={closeConfirmation}>취소</button><button ref={confirmButtonRef} type="button" disabled={purchasing || balance < selectedProduct.price || !isAvailable(selectedProduct, viewer?.level ?? 0)} onClick={() => void purchase()}>{purchasing ? "구매 중…" : "구매 확인"}</button></div>
         </> : <>
           <p className="eyebrow">PURCHASE COMPLETE</p>
           <h2 id="shop-modal-title">구매가 완료되었습니다.</h2>

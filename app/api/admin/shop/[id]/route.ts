@@ -33,6 +33,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const description = String(form.get("description") ?? "").trim().replace(/\s+/g, " ");
     const price = Number(form.get("price"));
     const stock = Number(form.get("stock"));
+    const minLevel = Number(form.get("minLevel"));
     const status = form.get("active") === "true" ? "active" : "hidden";
     const version = Number(form.get("version"));
     const expectedStock = Number(form.get("expectedStock"));
@@ -40,6 +41,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (description.length > 160) return Response.json({ error: "상품 설명은 160자 이하로 입력해 주세요." }, { status: 400 });
     if (!Number.isInteger(price) || price < 1 || price > 100_000_000) return Response.json({ error: "가격은 1P 이상으로 입력해 주세요." }, { status: 400 });
     if (!Number.isInteger(stock) || stock < 0 || stock > 1_000_000) return Response.json({ error: "판매 수량은 0개 이상으로 입력해 주세요." }, { status: 400 });
+    if (!Number.isInteger(minLevel) || minLevel < 1 || minLevel > 9) return Response.json({ error: "이용 가능 레벨은 Lv.1~Lv.9 중에서 선택해 주세요." }, { status: 400 });
     if (!Number.isInteger(version) || version < 1) return Response.json({ error: "상품 버전을 확인해 주세요." }, { status: 400 });
     if (!Number.isInteger(expectedStock) || expectedStock < 0) return Response.json({ error: "현재 판매 수량을 확인해 주세요." }, { status: 400 });
 
@@ -63,9 +65,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const updatedAt = new Date().toISOString();
     const updated = await env.DB.prepare(`
       UPDATE shop_products
-      SET name=?,description=?,price=?,stock=?,status=?,cover_key=?,version=version+1,updated_at=?
+      SET name=?,description=?,price=?,stock=?,min_level=?,status=?,cover_key=?,version=version+1,updated_at=?
       WHERE id=? AND version=? AND stock=?
-    `).bind(name, description, price, stock, status, nextCoverKey, updatedAt, productId, version, expectedStock).run();
+    `).bind(name, description, price, stock, minLevel, status, nextCoverKey, updatedAt, productId, version, expectedStock).run();
     if (updated.meta.changes !== 1) {
       if (uploadedKey && bucket) await bucket.delete(uploadedKey).catch(() => undefined);
       return Response.json({ error: "구매 또는 다른 관리자 수정으로 상품 정보가 변경되었습니다. 상품을 다시 불러와 주세요." }, { status: 409 });
