@@ -62,9 +62,10 @@ button { color:inherit; }
 .quick-account>div { min-width:0; display:flex; align-items:center; gap:14px; padding:12px 20px; }
 .quick-account>div+div { border-top:1px solid var(--line); }
 .point-summary strong { color:#111; }
-.point-shop-link { margin-left:auto; display:inline-flex; align-items:center; gap:10px; border:0!important; background:transparent!important; padding:4px 0!important; color:#111; }
+.point-shop-link { min-width:108px; height:36px; margin-left:auto; display:inline-flex; align-items:center; justify-content:center; gap:10px; border:1px solid #cfe8fb!important; border-radius:6px; background:#fff!important; padding:0 14px!important; color:#111; box-shadow:0 5px 14px rgba(90,175,239,.14)!important; }
 .point-shop-link strong { margin:0; font-size:19px; }
 .point-shop-link small { color:var(--sky-deep); font-size:11px; font-weight:900; }
+.point-shop-link:hover { background:var(--sky-soft)!important; box-shadow:0 7px 17px rgba(90,175,239,.2)!important; }
 .point-shop-link:hover small { color:var(--sky); }
 .attendance-status { color:#777; font-size:14px!important; }
 .attendance-status.complete { color:#e44343; }
