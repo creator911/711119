@@ -77,6 +77,7 @@ test("커뮤니티 작성·수정 화면과 주요 글 목록에 머릿글 UI가
   assert.ok((portal.match(/<CommunityPostTitle /g) ?? []).length >= 4, "목록·상세·미리보기·마이페이지에서 머릿글을 표시해야 한다");
   assert.match(styles, /\.community-tag-option input:checked\+span\s*\{[^}]*background:#111;[^}]*color:#fff;/);
   assert.match(styles, /\.community-title-tags\s*\{[^}]*color:#111;/);
-  assert.match(styles, /\.community-tag-option span\s*\{[^}]*font-size:14px;[^}]*font-weight:900;/);
+  assert.match(styles, /\.community-tag-option span\s*\{[^}]*min-width:48px;[^}]*height:26px;[^}]*font-size:12px;[^}]*font-weight:600;/);
   assert.match(styles, /@media[^]*\.community-tag-options\s*\{[^}]*grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
+  assert.match(styles, /@media[^]*\.community-tag-option span\s*\{[^}]*height:28px;[^}]*font-size:12px;[^}]*font-weight:600;/);
 });

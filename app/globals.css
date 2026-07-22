@@ -411,7 +411,7 @@ button { color:inherit; }
 .community-tag-options { display:flex; flex-wrap:wrap; gap:6px; }
 .community-tag-option { position:relative; }
 .community-tag-option input { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
-.community-tag-option span { min-width:68px; height:36px; display:flex; align-items:center; justify-content:center; border:1px solid #bbb; background:#fff; color:#222; padding:0 14px; font-size:14px; font-weight:900; cursor:pointer; user-select:none; }
+.community-tag-option span { min-width:48px; height:26px; display:flex; align-items:center; justify-content:center; border:1px solid #bbb; background:#fff; color:#222; padding:0 9px; font-size:12px; font-weight:600; cursor:pointer; user-select:none; }
 .community-tag-option input:checked+span { border-color:#111; background:#111; color:#fff; }
 .community-tag-option input:focus-visible+span { outline:2px solid #555; outline-offset:2px; }
 .community-tag-picker+.forum-title-input { margin-top:10px; }
@@ -1029,7 +1029,7 @@ button { color:inherit; }
   .forum-write-title strong { font-size:16px; }
   .community-tag-picker { width:100%; margin-top:14px; }
   .community-tag-options { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:4px; }
-  .community-tag-option span { width:100%; min-width:0; height:38px; padding:0 2px; font-size:14px; }
+  .community-tag-option span { width:100%; min-width:0; height:28px; padding:0 2px; font-size:12px; font-weight:600; }
   .community-title-tags { margin-right:4px; }
   .forum-title-input { width:100%; }
   .title-color-picker { width:100%; }
