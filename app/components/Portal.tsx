@@ -3,6 +3,7 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import AttendanceModal from "./AttendanceModal";
 import { FeaturedVendorDetail, FeaturedVendorGrid, type FeaturedVendorPost } from "./FeaturedVendors";
+import LevelProgressModal from "./LevelProgressModal";
 import RichTitleInput from "./RichTitleInput";
 import RichTextEditor from "./RichTextEditor";
 import ShopPage from "./ShopPage";
@@ -152,6 +153,7 @@ export default function Portal() {
   const [points, setPoints] = useState(0);
   const [attended, setAttended] = useState(false);
   const [viewer, setViewer] = useState<Viewer | null>(null);
+  const [levelProgressOpen, setLevelProgressOpen] = useState(false);
   const [accountSubmitting, setAccountSubmitting] = useState(false);
   const [livePosts, setLivePosts] = useState<Partial<Record<BoardKind, LivePost[]>>>({});
   const [writeKind, setWriteKind] = useState<BoardKind | null>(null);
@@ -211,6 +213,21 @@ export default function Portal() {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   }, []);
+
+  const handleLevelChange = useCallback((nextLevel: number) => {
+    setViewer((current) => current ? { ...current, level: nextLevel } : current);
+    setMyPage((current) => current ? { ...current, user: { ...current.user, level: nextLevel } } : current);
+  }, []);
+
+  const handleLevelSessionExpired = useCallback(() => {
+    setLevelProgressOpen(false);
+    setViewer(null);
+    setPoints(0);
+    setAttended(false);
+    setMyPage(null);
+    setModal("login");
+    showToast("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+  }, [showToast]);
 
   const loadFeaturedVendors = useCallback(async () => {
     const requestId = ++featuredRequestRef.current;
@@ -410,6 +427,7 @@ export default function Portal() {
 
   const logout = async () => {
     try { await fetch("/api/auth/logout", { method: "POST" }); } finally {
+      setLevelProgressOpen(false);
       setViewer(null);
       window.dispatchEvent(new CustomEvent("cn:member-session", { detail: { authenticated: false } }));
       setPoints(0);
@@ -576,7 +594,7 @@ export default function Portal() {
             <button type="submit" aria-label="검색">⌕</button>
           </form>
           <div className="member-actions">
-            {viewer ? <><span className="member-level">Lv.{viewer.level}</span><span className="member-name" title={viewer.nickname}>{viewer.nickname}님</span><button className="mypage-button" onClick={openMyPage}>마이페이지</button>{viewer.level === 10 && <a className="admin-link" href="/admin">관리자</a>}<button className="logout-button" onClick={logout}>로그아웃</button></> : <><button className="text-button" onClick={() => setModal("login")}>로그인</button><button className="primary-button" onClick={() => setModal("signup")}>회원가입</button></>}
+            {viewer ? <><button type="button" className="member-level" onClick={() => setLevelProgressOpen(true)} aria-haspopup="dialog" aria-expanded={levelProgressOpen} aria-label={`Lv.${viewer.level} 레벨업 안내 열기`}>Lv.{viewer.level}</button><span className="member-name" title={viewer.nickname}>{viewer.nickname}님</span><button className="mypage-button" onClick={openMyPage}>마이페이지</button>{viewer.level === 10 && <a className="admin-link" href="/admin">관리자</a>}<button className="logout-button" onClick={logout}>로그아웃</button></> : <><button className="text-button" onClick={() => setModal("login")}>로그인</button><button className="primary-button" onClick={() => setModal("signup")}>회원가입</button></>}
           </div>
         </div>
         <nav className="main-nav page-width" aria-label="주요 메뉴">
@@ -776,6 +794,7 @@ export default function Portal() {
       </footer>
 
       {modal === "attendance" ? <AttendanceModal onClose={() => setModal(null)} onLoginRequired={() => setModal("login")} onAttendance={(nextPoints, nextLevel) => { setPoints(nextPoints); setAttended(true); setViewer((current) => current ? { ...current, points: nextPoints, level: nextLevel ?? current.level, attended: true } : current); }} showToast={showToast} /> : modal && <Modal type={modal} onClose={() => setModal(null)} onSubmit={submitAccount} onSwitch={setModal} submitting={accountSubmitting} />}
+      {levelProgressOpen && viewer && <LevelProgressModal onClose={() => setLevelProgressOpen(false)} onLevelChange={handleLevelChange} onSessionExpired={handleLevelSessionExpired} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );

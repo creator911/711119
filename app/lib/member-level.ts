@@ -9,6 +9,8 @@ export const MEMBER_LEVEL_REQUIREMENTS = [
   { level: 2, attendance: 5, posts: 5, comments: 10 },
 ] as const;
 export type MemberLevelRequirement = typeof MEMBER_LEVEL_REQUIREMENTS[number] | { level: number; attendance: number; posts: number; comments: number };
+export type LevelProgressCounts = { attendance: number; posts: number; comments: number };
+export type LevelProgressTarget = LevelProgressCounts & { level: number };
 
 export const isMemberLevel = (value: unknown): value is number =>
   Number.isInteger(value) && Number(value) >= MIN_MEMBER_LEVEL && Number(value) <= MAX_MEMBER_LEVEL;
@@ -24,6 +26,18 @@ export const automaticMemberLevel = (postCount: number, commentCount: number, at
 
 export const attendancePointsForLevel = (level: number, basePoints = 50, levelStepPoints = 10) =>
   basePoints + Math.max(0, Math.min(MAX_MEMBER_LEVEL, Math.trunc(level)) - MIN_MEMBER_LEVEL) * levelStepPoints;
+
+const cappedLevelProgressRatio = (current: number, required: number) =>
+  required <= 0 ? 1 : Math.min(1, Math.max(0, current) / required);
+
+export function memberLevelProgressPercent(current: LevelProgressCounts, target: LevelProgressTarget) {
+  const progress = (
+    cappedLevelProgressRatio(current.attendance, target.attendance) +
+    cappedLevelProgressRatio(current.posts, target.posts) +
+    cappedLevelProgressRatio(current.comments, target.comments)
+  ) / 3 * 100;
+  return Math.min(100, Math.round(progress * 10) / 10);
+}
 
 /**
  * 레벨 권한은 누적되지 않습니다.

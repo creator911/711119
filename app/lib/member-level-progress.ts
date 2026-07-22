@@ -13,7 +13,7 @@ type LevelProgressDatabase = {
   prepare: (query: string) => PreparedStatement;
 };
 
-type LevelProgressRow = {
+export type LevelProgressRow = {
   id: number;
   level: number;
   levelLocked: number | boolean;
@@ -22,8 +22,8 @@ type LevelProgressRow = {
   attendanceCount: number;
 };
 
-export async function refreshAutomaticMemberLevel(database: LevelProgressDatabase, userId: number) {
-  const row = await database.prepare(`
+export async function loadMemberLevelProgressRow(database: LevelProgressDatabase, userId: number) {
+  return database.prepare(`
     SELECT u.id,u.level,u.level_locked AS levelLocked,
            (SELECT COUNT(*) FROM posts p WHERE p.author_id=u.id AND p.status='published') AS postCount,
            (SELECT COUNT(*) FROM post_comments c WHERE c.user_id=u.id AND c.status='published') AS commentCount,
@@ -31,6 +31,10 @@ export async function refreshAutomaticMemberLevel(database: LevelProgressDatabas
     FROM users u
     WHERE u.id=?
   `).bind(userId).first<LevelProgressRow>();
+}
+
+export async function refreshAutomaticMemberLevel(database: LevelProgressDatabase, userId: number) {
+  const row = await loadMemberLevelProgressRow(database, userId);
 
   if (!row) return 1;
   if (Boolean(row.levelLocked) || row.level >= 10) return row.level;
