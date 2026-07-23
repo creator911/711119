@@ -1,5 +1,6 @@
 "use client";
 
+import NextImage from "next/image";
 import { FormEvent, ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import AttendanceModal from "./AttendanceModal";
 import { FeaturedVendorDetail, FeaturedVendorGrid, type FeaturedVendorPost } from "./FeaturedVendors";
@@ -936,7 +937,7 @@ export default function Portal() {
       <header className="site-header">
         <div className="header-top page-width">
           <button className="logo-button" onClick={() => go("home")} aria-label="출장나라 홈">
-            <img src="/logo.png" alt="출장나라" />
+            <NextImage src="/logo.png" alt="출장나라" width={589} height={166} />
           </button>
           <form className="search" onSubmit={search}>
             <input value={query} onChange={(e) => setQuery(e.target.value)} maxLength={80} placeholder="지역·업종·업체명 검색" aria-label="업체정보 검색" />
@@ -996,7 +997,7 @@ export default function Portal() {
 
             <section className="editorial page-width">
               <div><span>WELCOME BENEFIT</span><h2>오늘 출석하면<br />{attendancePointsForLevel(viewer?.level ?? 1)}P 적립</h2><p>레벨이 오를수록 출석 포인트도 함께 올라갑니다.</p><button onClick={() => setModal(viewer ? "attendance" : "signup")}>{viewer ? "오늘 출석하기" : "3초 회원가입"}</button></div>
-              <img src="/images/vendor-04.jpg" alt="편안한 웰니스 공간" />
+              <NextImage src="/images/vendor-04.jpg" alt="편안한 웰니스 공간" width={1000} height={667} unoptimized />
             </section>
           </>
         ) : view === "vendors" ? (
@@ -1163,7 +1164,7 @@ export default function Portal() {
 
       <footer className="site-footer">
         <div className="page-width footer-inner">
-          <div><img src="/logo.png" alt="출장나라" /><p>검증된 정보와 건강한 이용 문화를 만듭니다.</p></div>
+          <div><NextImage src="/logo.png" alt="출장나라" width={589} height={166} /><p>검증된 정보와 건강한 이용 문화를 만듭니다.</p></div>
           <p className="copyright">© 2026 출장나라. All rights reserved.</p>
           <div className="socials" aria-label="소셜 미디어">
             <a className="social-instagram" href="https://www.instagram.com/care_nara_/" target="_blank" rel="noreferrer" aria-label="인스타그램 새 창으로 열기" />
@@ -2128,7 +2129,7 @@ function Modal({ type, onClose, onSubmit, onSwitch, submitting }: { type: "login
   return <div className="modal-backdrop" onMouseDown={onClose}>
     <form key={type} className={`modal account-modal ${type === "signup" ? "signup-modal" : ""}`} onSubmit={onSubmit} onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
       <button type="button" className="modal-close" onClick={onClose} aria-label="창 닫기">×</button>
-      <img src="/logo.png" alt="출장나라" />
+      <NextImage src="/logo.png" alt="출장나라" width={589} height={166} />
       <h2 id="account-modal-title">{type === "signup" ? "빠른 회원가입" : "다시 오신 것을 환영해요"}</h2>
       <p className="modal-lead">{type === "signup" ? "필요한 정보만 간단하게 입력하세요." : "아이디와 비밀번호를 입력하세요."}</p>
       {type === "signup" ? <>
@@ -2142,7 +2143,7 @@ function Modal({ type, onClose, onSubmit, onSwitch, submitting }: { type: "login
         <div className="captcha-field">
           <div className="captcha-heading"><b>자동 등록 방지</b><span aria-hidden="true">필수</span></div>
           <div className="captcha-row">
-            <img key={captchaKey} src={`/api/captcha?t=${captchaKey}`} alt="자동 등록 방지 숫자 이미지" />
+            <NextImage key={captchaKey} src={`/api/captcha?t=${captchaKey}`} alt="자동 등록 방지 숫자 이미지" width={170} height={58} unoptimized />
             <button type="button" className="captcha-refresh" onClick={() => setCaptchaKey(Date.now())} aria-label="자동 등록 방지 숫자 새로고침"><span aria-hidden="true">↻</span><small>새로고침</small></button>
             <label className="captcha-answer" htmlFor="captcha-answer"><span className="sr-only">자동 등록 방지 숫자</span><input id="captcha-answer" name="captchaAnswer" required inputMode="numeric" pattern="[0-9]{5}" minLength={5} maxLength={5} autoComplete="off" placeholder="숫자 5자리" /></label>
           </div>

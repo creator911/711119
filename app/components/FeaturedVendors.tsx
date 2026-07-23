@@ -1,5 +1,6 @@
 "use client";
 
+import NextImage from "next/image";
 import { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getCoverCropGeometry, moveCoverPositionByDrag } from "../lib/featured-cover-crop";
 import { renderRichBody } from "../lib/rich-text";
@@ -58,7 +59,7 @@ export function FeaturedVendorGrid({ posts, loading = false, onOpen }: {
   return <div className="vendor-grid featured-vendor-grid" aria-label="추천 제휴업체">
     {loading && !rows.length ? Array.from({ length: 4 }, (_, index) => <article className="vendor-card featured-vendor-loading" key={index} aria-hidden="true"><div /><span /><small /></article>) : rows.map((post) => <article className="vendor-card featured-vendor-card" key={post.slot}>
       <button type="button" className="featured-vendor-open" onClick={() => onOpen(post)} aria-label={`${post.title} 업체정보 보기`}>
-        <div className="vendor-image"><img src={post.coverImage} alt={`${post.title} 대문`} /><span className="vendor-badge">TOP</span></div>
+        <div className="vendor-image"><NextImage src={post.coverImage} alt={`${post.title} 대문`} width={800} height={500} unoptimized /><span className="vendor-badge">TOP</span></div>
         <div className="vendor-info"><h3>{post.title}</h3><div className="featured-vendor-meta"><strong>{post.industry}</strong><span>{post.district}</span></div></div>
       </button>
     </article>)}
@@ -75,7 +76,7 @@ export function FeaturedVendorDetail({ post, onClose, onSaved, showToast }: {
   if (editing) return <FeaturedVendorEditor post={post} onCancel={() => setEditing(false)} onSaved={(next) => { onSaved(next); setEditing(false); }} showToast={showToast} />;
   return <article className="featured-vendor-detail">
     <figure className="featured-vendor-detail-cover">
-      <img src={post.coverImage} alt={`${post.title} 대문`} />
+      <NextImage src={post.coverImage} alt={`${post.title} 대문`} width={1600} height={1000} unoptimized />
       <span>TOP</span>
       <button type="button" onClick={onClose}>목록</button>
     </figure>
@@ -301,7 +302,7 @@ function FeaturedCoverCropper({ initialUrl, title, onChange, showToast }: {
         onPointerCancel={finishDrag}
         onLostPointerCapture={finishDrag}
       >
-        {cropping ? <canvas ref={canvasRef} width={800} height={500} aria-label="대문 사진 자르기 미리보기" /> : <img src={appliedUrl || initialUrl} alt={`${title} 대문 미리보기`} />}
+        {cropping ? <canvas ref={canvasRef} width={800} height={500} aria-label="대문 사진 자르기 미리보기" /> : <NextImage src={appliedUrl || initialUrl} alt={`${title} 대문 미리보기`} width={800} height={500} unoptimized />}
         <span>TOP</span>
         {cropping && imageReady && <p className="featured-cover-drag-hint">사진을 끌어 위치 조정</p>}
       </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import NextImage from "next/image";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export type AdminShopProduct = {
@@ -471,7 +472,7 @@ export default function AdminShop({ onChanged }: { onChanged: () => void }) {
         const vouchersLow = !vouchersUnconfirmed && product.availableVouchers > 0 && product.availableVouchers <= 5;
         return <article className={`shop-product-card${expanded ? " expanded" : ""}${product.active ? "" : " inactive"}`} key={product.id}>
           <button className="shop-product-summary" type="button" aria-expanded={expanded} aria-controls={`shop-product-editor-${product.id}`} disabled={busyId !== null && busyId !== product.id} onClick={() => openProduct(product)}>
-            <span className="shop-product-thumbnail">{product.imageUrl ? <img src={product.imageUrl} alt={`${product.name} 대표사진`} /> : <span aria-hidden="true">NO IMAGE</span>}</span>
+            <span className="shop-product-thumbnail">{product.imageUrl ? <NextImage src={product.imageUrl} alt={`${product.name} 대표사진`} width={56} height={56} unoptimized /> : <span aria-hidden="true">NO IMAGE</span>}</span>
             <span className="shop-product-name"><b>{product.name}</b><small>{product.active ? "공개 중" : "숨김"}</small></span>
             <span><small>가격</small><b>{product.price.toLocaleString()}P</b></span>
             <span><small>레벨 제한</small><b>Lv.{product.minLevel} 이상</b></span>
@@ -489,7 +490,7 @@ export default function AdminShop({ onChanged }: { onChanged: () => void }) {
               <fieldset disabled={busyId !== null}>
                 <legend>상품 정보 수정</legend>
                 <div className="shop-product-image-field">
-                  <div className="shop-product-image-preview">{imagePreview ? <img src={imagePreview} alt={`${draft.name || product.name} 대표사진 미리보기`} /> : <span>대표사진 없음</span>}</div>
+                  <div className="shop-product-image-preview">{imagePreview ? <NextImage src={imagePreview} alt={`${draft.name || product.name} 대표사진 미리보기`} width={800} height={600} unoptimized /> : <span>대표사진 없음</span>}</div>
                   <label className="shop-file-button">대표사진 선택<input className="shop-file-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onChange={selectProductImage} /></label>
                   {imageFile && <small>{imageFile.name}</small>}
                 </div>
@@ -542,7 +543,7 @@ export default function AdminShop({ onChanged }: { onChanged: () => void }) {
                   {voucherListLoading && !vouchers.length ? <p className="shop-voucher-empty">지급 이미지 목록을 불러오는 중입니다.</p> : vouchers.length ? <div className="shop-voucher-thumbnails">
                     {vouchers.map((voucher) => <label className={selectedVoucherIds.includes(voucher.id) ? "selected" : ""} key={voucher.id}>
                       <input type="checkbox" checked={selectedVoucherIds.includes(voucher.id)} disabled={busyId !== null} onChange={() => toggleVoucher(voucher.id)} />
-                      <img src={voucher.imageUrl} alt={voucher.originalName || `지급 이미지 ${voucher.id}`} loading="lazy" />
+                      <NextImage src={voucher.imageUrl} alt={voucher.originalName || `지급 이미지 ${voucher.id}`} width={240} height={180} loading="lazy" unoptimized />
                       <span title={voucher.originalName}>{voucher.originalName || `이미지 ${voucher.id}`}</span>
                       <small>{compactBytes(voucher.sizeBytes)}</small>
                     </label>)}

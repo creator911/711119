@@ -1,5 +1,6 @@
 "use client";
 
+import NextImage from "next/image";
 import { ChangeEvent, DragEvent, FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { uploadMediaFile } from "../lib/client-media-upload";
 import { IMAGE_UPLOAD_LIMIT, optimizeImageFile } from "./RichTextEditor";
@@ -123,7 +124,7 @@ export default function SupportReplyComposer({
     {dragging && <div className="support-reply-dropzone" aria-hidden="true">여기에 사진을 놓으세요</div>}
     {attachments.length > 0 && <div className="support-reply-previews" aria-label="첨부 사진 미리보기">
       {attachments.map((image, index) => <figure key={`${image.protectedUrl}-${index}`}>
-        <img src={image.previewUrl} alt={`${index + 1}번 첨부 사진 미리보기`} />
+        <NextImage src={image.previewUrl} alt={`${index + 1}번 첨부 사진 미리보기`} width={160} height={160} unoptimized />
         <button type="button" onClick={() => setAttachments((current) => current.filter((_, target) => target !== index))} aria-label={`${index + 1}번 첨부 사진 제거`}>×</button>
       </figure>)}
     </div>}

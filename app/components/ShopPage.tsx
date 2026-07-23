@@ -1,5 +1,6 @@
 "use client";
 
+import NextImage from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type ShopProduct = {
@@ -274,7 +275,7 @@ export default function ShopPage({ viewer, onLoginRequired, onSessionExpired, on
             const levelAllowed = !viewer || viewer.level >= product.minLevel;
             return <article className={`shop-product-card${inStock ? "" : " sold-out"}${levelAllowed ? "" : " level-locked"}`} key={product.id}>
               <div className="shop-product-image">
-                {product.imageUrl ? <img src={product.imageUrl} alt={`${product.name} 상품 이미지`} /> : <span aria-hidden="true">POINT SHOP</span>}
+                {product.imageUrl ? <NextImage src={product.imageUrl} alt={`${product.name} 상품 이미지`} width={800} height={600} unoptimized /> : <span aria-hidden="true">POINT SHOP</span>}
                 {!inStock && <em>품절</em>}
               </div>
               <div className="shop-product-content">
