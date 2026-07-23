@@ -1,0 +1,1 @@
+CREATE INDEX `posts_deleted_retention_idx` ON `posts` (`deleted_at`,`id`) WHERE "posts"."status" = 'deleted' AND "posts"."deleted_at" IS NOT NULL;

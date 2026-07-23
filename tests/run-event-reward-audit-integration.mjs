@@ -44,6 +44,10 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (!ready) throw new Error(`Test server did not start.\n${serverOutput}`);
+  run("tests/event-reward-settlement-integration.mjs", {
+    TEST_BASE_URL: `http://127.0.0.1:${port}`,
+    TEST_DB_PATH: databasePath,
+  });
   run("tests/event-reward-audit-integration.mjs", {
     TEST_BASE_URL: `http://127.0.0.1:${port}`,
     TEST_DB_PATH: databasePath,

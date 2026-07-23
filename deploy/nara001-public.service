@@ -1,0 +1,32 @@
+[Unit]
+Description=Nara001 public application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nara001
+Group=nara001
+WorkingDirectory=/opt/nara001/current
+Environment=NODE_ENV=production
+Environment=NARA_APP_SURFACE=public
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/etc/nara001/shared.env
+EnvironmentFile=/etc/nara001/public.env
+ExecStartPre=/usr/local/bin/node server/migrate.mjs
+ExecStart=/usr/local/bin/npm run start -- --hostname 127.0.0.1 --port 3000
+Restart=always
+RestartSec=3
+TimeoutStartSec=120
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nara001
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=131072
+
+[Install]
+WantedBy=multi-user.target

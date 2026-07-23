@@ -16,9 +16,10 @@ test("point system defaults match requested rewards and level thresholds", async
 });
 
 test("post, comment, attendance, leaderboard, and admin UI use shared point settings", async () => {
-  const [postsRoute, commentsRoute, attendanceRoute, leaderboard, admin, adminPoint, route] = await Promise.all([
+  const [postsRoute, commentsRoute, contentRewards, attendanceRoute, leaderboard, admin, adminPoint, route] = await Promise.all([
     readFile(new URL("../app/api/posts/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/posts/[id]/comments/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/content-rewards.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/attendance/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/event-leaderboard.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/admin/AdminConsole.tsx", import.meta.url), "utf8"),
@@ -29,8 +30,10 @@ test("post, comment, attendance, leaderboard, and admin UI use shared point sett
   assert.match(postsRoute, /loadPointSettings\(env\.DB\)/);
   assert.match(postsRoute, /reviewCreatePoints/);
   assert.match(postsRoute, /postCreatePoints/);
-  assert.match(postsRoute, /point_ledger\(user_id,amount,type,status,reference,created_at\)/);
+  assert.match(postsRoute, /publishPostWithReward\(env\.DB/);
   assert.match(commentsRoute, /commentCreatePoints/);
+  assert.match(commentsRoute, /publishCommentWithReward\(env\.DB/);
+  assert.match(contentRewards, /point_ledger\(user_id,amount,type,status,reference,created_at\)/);
   assert.match(attendanceRoute, /attendancePointsForSettings/);
   assert.match(leaderboard, /pointSettings\.eventRewards/);
   assert.match(admin, /<AdminPointSettings \/>/);

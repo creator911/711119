@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { adminSession } from "../../../lib/admin-auth";
+import { invalidateActiveAnnouncementSnapshot } from "../../../lib/system-announcement-active-cache";
 import {
   announcementState,
   MAX_ANNOUNCEMENT_CONTENT,
@@ -17,7 +18,7 @@ type AnnouncementRow = {
   status: "active" | "cancelled";
   createdBy: string;
   createdAt: string;
-  deliveredCount: number;
+  updatedAt: string;
   acknowledgedCount: number;
 };
 
@@ -25,7 +26,6 @@ const publicRow = (row: AnnouncementRow): AdminSystemAnnouncement => ({
   ...row,
   requiresConfirmation: Boolean(row.requiresConfirmation),
   state: announcementState(row.status, row.startsAt, row.endsAt),
-  deliveredCount: Number(row.deliveredCount),
   acknowledgedCount: Number(row.acknowledgedCount),
 });
 
@@ -33,16 +33,16 @@ export async function GET(request: Request) {
   if (!await adminSession(request, env)) return Response.json({ error: "관리자 로그인이 필요합니다." }, { status: 401 });
   try {
     const result = await env.DB.prepare(`
+      WITH recent AS (
+        SELECT id,content,requires_confirmation,starts_at,ends_at,status,created_by,created_at,updated_at
+        FROM system_announcements ORDER BY id DESC LIMIT 100
+      )
       SELECT a.id,a.content,a.requires_confirmation AS requiresConfirmation,
              a.starts_at AS startsAt,a.ends_at AS endsAt,a.status,
-             a.created_by AS createdBy,a.created_at AS createdAt,
-             COUNT(r.id) AS deliveredCount,
-             SUM(CASE WHEN r.acknowledged_at IS NOT NULL THEN 1 ELSE 0 END) AS acknowledgedCount
-      FROM system_announcements a
-      LEFT JOIN system_announcement_receipts r ON r.announcement_id=a.id
-      GROUP BY a.id
-      ORDER BY a.id DESC
-      LIMIT 100
+             a.created_by AS createdBy,a.created_at AS createdAt,a.updated_at AS updatedAt,
+             (SELECT COUNT(*) FROM system_announcement_receipts r
+              WHERE r.announcement_id=a.id AND r.acknowledged_at IS NOT NULL) AS acknowledgedCount
+      FROM recent a ORDER BY a.id DESC
     `).all<AnnouncementRow>();
     return Response.json({ announcements: result.results.map(publicRow) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
@@ -66,10 +66,12 @@ export async function POST(request: Request) {
       INSERT INTO system_announcements(content,requires_confirmation,starts_at,ends_at,status,created_by,created_at,updated_at)
       VALUES(?,?,?,?,?,?,?,?)
     `).bind(content, requiresConfirmation ? 1 : 0, startsAt, endsAt, "active", operator.username, createdAt, createdAt).run();
+    invalidateActiveAnnouncementSnapshot();
     const id = Number(inserted.meta.last_row_id);
     const row = await env.DB.prepare(`
       SELECT id,content,requires_confirmation AS requiresConfirmation,starts_at AS startsAt,ends_at AS endsAt,
-             status,created_by AS createdBy,created_at AS createdAt,0 AS deliveredCount,0 AS acknowledgedCount
+             status,created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt,
+             0 AS acknowledgedCount
       FROM system_announcements WHERE id=?
     `).bind(id).first<AnnouncementRow>();
     return Response.json({ announcement: row ? publicRow(row) : null }, { status: 201 });

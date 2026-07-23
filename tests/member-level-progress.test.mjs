@@ -27,12 +27,20 @@ test("level guide reloads admin settings and current member activity whenever op
   ]);
 
   assert.match(route, /memberFromSession\(request\)/);
-  assert.match(route, /refreshAutomaticMemberLevel\(env\.DB, member\.id\)/);
+  assert.match(route, /refreshAutomaticMemberLevelFromProgressRow\(env\.DB, loadedRow, settings\)/);
+  assert.equal(route.match(/loadMemberLevelProgressRow\(env\.DB/g)?.length, 1);
   assert.match(route, /loadPointSettings\(env\.DB\)/);
   assert.match(route, /requirement\.level === row\.level \+ 1/);
   assert.match(modal, /fetch\("\/api\/member-level-progress", \{ cache: "no-store" \}\)/);
   assert.match(modal, /출석일 \{data\.remaining\.attendance\}일/);
-  assert.match(modal, /상점 이용 가능 품목이 증가합니다/);
+  assert.match(modal, /role="dialog" aria-modal="true"/);
+  assert.match(modal, /event\.key === "Escape"/);
+  assert.match(modal, /event\.key !== "Tab"/);
+  assert.match(modal, /!dialog\.contains\(activeElement\) \|\| !focusable\.includes\(activeElement\)/);
+  assert.match(modal, /document\.addEventListener\("focusin", recoverFocus\)/);
+  assert.match(modal, /previousFocus\?\.isConnected/);
+  assert.doesNotMatch(modal, /LEVEL UP BENEFIT|상점 이용 가능 품목이 증가합니다/);
+  assert.doesNotMatch(styles, /\.level-progress-benefit/);
   assert.match(portal, /<button type="button" className="member-level"[\s\S]*?aria-haspopup="dialog"/);
   assert.match(portal, /levelProgressOpen && viewer && <LevelProgressModal/);
   assert.match(styles, /\.level-progress-track>span/);

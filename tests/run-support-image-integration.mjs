@@ -44,6 +44,7 @@ try {
   if (!ready) throw new Error(`Test server did not start.\n${serverOutput}`);
   run("tests/support-integration.mjs", {
     TEST_BASE_URL: `http://127.0.0.1:${port}`,
+    TEST_DB_PATH: env.NARA_DB_PATH,
     TEST_ADMIN_USERNAME: "dow",
     TEST_ADMIN_PASSWORD: password,
   });

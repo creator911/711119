@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Nara001 event settlement without visitor traffic
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=nara001-event-settlement.service
+
+[Install]
+WantedBy=timers.target

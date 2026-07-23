@@ -37,7 +37,16 @@ export default function RichTitleInput({
   ariaLabel?: string;
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
+  const selectionRef = useRef<Range | null>(null);
   const [empty, setEmpty] = useState(() => titleText(value).length === 0);
+
+  const rememberSelection = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (editor.contains(range.commonAncestorContainer)) selectionRef.current = range.cloneRange();
+  };
 
   const sync = () => {
     const html = editorRef.current?.innerHTML ?? "";
@@ -56,7 +65,13 @@ export default function RichTitleInput({
     const editor = editorRef.current;
     if (!editor) return;
     editor.focus();
+    if (selectionRef.current) {
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(selectionRef.current);
+    }
     document.execCommand("foreColor", false, color);
+    rememberSelection();
     sync();
   };
 
@@ -75,21 +90,26 @@ export default function RichTitleInput({
       tabIndex={0}
       autoFocus={autoFocus}
       onInput={sync}
-      onBlur={sync}
+      onBlur={() => { rememberSelection(); sync(); }}
+      onKeyUp={rememberSelection}
+      onMouseUp={rememberSelection}
       onKeyDown={(event) => {
         if (event.key === "Enter") event.preventDefault();
       }}
       onPaste={() => setTimeout(sync, 0)}
     />
-    <div className="rich-title-toolbar" aria-label="제목 글자 색상">
+    <div className="rich-title-toolbar" role="group" aria-label="제목 글자 색상">
       <span>제목 글자색</span>
       {TITLE_COLORS.map((color) => <button
         type="button"
         key={color.value}
         onMouseDown={(event) => {
+          rememberSelection();
           event.preventDefault();
-          applyColor(color.value);
         }}
+        onClick={() => applyColor(color.value)}
+        aria-label={`선택한 제목 글자를 ${color.label} 색상으로 변경`}
+        title={`${color.label} 색상`}
       >
         <i style={{ background: color.value }} />
         {color.label}
@@ -101,7 +121,8 @@ export default function RichTitleInput({
           type="color"
           aria-label="제목 글자색 직접 선택"
           defaultValue="#111111"
-          onMouseDown={(event) => event.preventDefault()}
+          onMouseDown={rememberSelection}
+          onFocus={rememberSelection}
           onChange={(event) => applyColor(event.target.value)}
         />
       </label>

@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { isUniqueConstraintError } from "../../lib/database-errors";
 import { adminSession } from "../../lib/admin-auth";
 import { memberFromSession, type MemberSession } from "../../lib/member-auth";
 import { normalizeRichBody, normalizeRichTitle } from "../../lib/rich-text";
@@ -88,11 +89,11 @@ async function loadJumpSummary(userId: number, assignmentCount: number) {
 }
 
 function orderCase(column: string, values: readonly string[]) {
-  return `CASE ${column} ${values.map((_, index) => `WHEN ? THEN ${index}`).join(" ")} ELSE ${values.length} END`;
+  return `CASE ${column} ${values.map((value, index) =>
+    `WHEN '${value.replaceAll("'", "''")}' THEN ${index}`).join(" ")} ELSE ${values.length} END`;
 }
 
 const vendorRegionOrder = vendorRegionGroups.filter((group) => group.districts.length > 0).map((group) => group.label);
-const vendorOrderValues = [...writableVendorCategories, ...vendorRegionOrder];
 const vendorOrderSql = [
   "COALESCE(vp.jumped_at,vp.created_at) DESC",
   `${orderCase("vp.industry", writableVendorCategories)} ASC`,
@@ -123,27 +124,61 @@ export async function GET(request: Request) {
     if (region !== "전체") { conditions.push("vp.region=?"); bindings.push(region); }
     if (district !== "전체") { conditions.push("vp.district=?"); bindings.push(district); }
     if (search) {
-      conditions.push(`(
-        instr(lower(vp.industry),lower(?))>0 OR instr(lower(vp.region),lower(?))>0 OR
-        instr(lower(vp.district),lower(?))>0 OR instr(lower(vp.title),lower(?))>0 OR
-        instr(lower(vp.body),lower(?))>0
-      )`);
-      bindings.push(search, search, search, search, search);
+      if (String(env.NARA_DATABASE_DRIVER ?? "sqlite").toLowerCase() === "postgres") {
+        conditions.push(`lower(
+          vp.industry || ' ' || vp.region || ' ' || vp.district || ' ' || vp.title || ' ' || vp.body
+        ) LIKE lower(?)`);
+        bindings.push(`%${search}%`);
+      } else {
+        conditions.push(`(
+          instr(lower(vp.industry),lower(?))>0 OR instr(lower(vp.region),lower(?))>0 OR
+          instr(lower(vp.district),lower(?))>0 OR instr(lower(vp.title),lower(?))>0 OR
+          instr(lower(vp.body),lower(?))>0
+        )`);
+        bindings.push(search, search, search, search, search);
+      }
     }
+    const cursorCte = cursor ? `
+      WITH cursor_row AS (
+        SELECT COALESCE(jumped_at,created_at) AS sort_time,
+               ${orderCase("industry", writableVendorCategories)} AS industry_order,
+               ${orderCase("region", vendorRegionOrder)} AS region_order,
+               district,id
+        FROM vendor_posts WHERE id=?
+      )
+    ` : "";
+    const cursorJoin = cursor ? "CROSS JOIN cursor_row cursor" : "";
+    const cursorWhere = cursor ? ` AND (
+      COALESCE(vp.jumped_at,vp.created_at)<cursor.sort_time OR (
+        COALESCE(vp.jumped_at,vp.created_at)=cursor.sort_time AND (
+          ${orderCase("vp.industry", writableVendorCategories)}>cursor.industry_order OR (
+            ${orderCase("vp.industry", writableVendorCategories)}=cursor.industry_order AND (
+              ${orderCase("vp.region", vendorRegionOrder)}>cursor.region_order OR (
+                ${orderCase("vp.region", vendorRegionOrder)}=cursor.region_order AND (
+                  vp.district>cursor.district OR (vp.district=cursor.district AND vp.id<cursor.id)
+                )
+              )
+            )
+          )
+        )
+      )
+    )` : "";
     const rows = await env.DB.prepare(`
-      SELECT vp.id,vp.industry,vp.region,vp.district,vp.title,vp.title_color AS titleColor,vp.body,vp.author_id AS authorId,
+      ${cursorCte}
+      SELECT vp.id,vp.industry,vp.region,vp.district,vp.title,vp.title_color AS titleColor,'' AS body,vp.author_id AS authorId,
              COALESCE(u.nickname,'탈퇴회원') AS author,COALESCE(u.level,0) AS authorLevel,
              vp.created_at AS createdAt,vp.updated_at AS updatedAt
       FROM vendor_posts vp LEFT JOIN users u ON u.id=vp.author_id
-      WHERE ${conditions.join(" AND ")}
-      ORDER BY ${vendorOrderSql} LIMIT 31 OFFSET ?
-    `).bind(...bindings, ...vendorOrderValues, cursor).all<VendorPostRow>();
+      ${cursorJoin}
+      WHERE ${conditions.join(" AND ")}${cursorWhere}
+      ORDER BY ${vendorOrderSql} LIMIT 31
+    `).bind(...(cursor ? [cursor, ...bindings] : bindings)).all<VendorPostRow>();
 
     const canWrite = viewer ? await isActiveDirector(viewer.id) : false;
     const assignedRegions = viewer && canWrite ? await loadAssignments(viewer.id) : [];
     const jumpSummary = viewer && canWrite ? await loadJumpSummary(viewer.id, assignedRegions.length) : null;
     const page = rows.results.slice(0, 30);
-    const nextCursor = rows.results.length > 30 ? cursor + page.length : null;
+    const nextCursor = rows.results.length > 30 ? Number(page.at(-1)?.id ?? 0) || null : null;
     const adminActor = isStandaloneAdminActor(viewer, operator);
     return Response.json({ posts: page.map((post) => decorate(post, viewer, adminActor)), nextCursor, canWrite, assignedRegions, jumpSummary });
   } catch (error) {
@@ -200,8 +235,7 @@ export async function POST(request: Request) {
     if (mediaClaim && !saveCommitted) await rollbackBodyMedia(env.DB, mediaClaim).catch(() => undefined);
     const mediaStatus = mediaLifecycleErrorStatus(error);
     if (mediaStatus) return Response.json({ error: (error as Error).message }, { status: mediaStatus });
-    const message = error instanceof Error ? error.message : "";
-    if (message.includes("UNIQUE")) return Response.json({ error: "해당 상세지역에는 이미 업체정보 글을 등록했습니다." }, { status: 409 });
+    if (isUniqueConstraintError(error)) return Response.json({ error: "해당 상세지역에는 이미 업체정보 글을 등록했습니다." }, { status: 409 });
     console.error("Vendor post creation failed", error);
     return Response.json({ error: "업체정보 글을 저장하지 못했습니다." }, { status: 500 });
   }

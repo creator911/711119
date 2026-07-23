@@ -6,14 +6,26 @@ export type SystemAnnouncement = {
   requiresConfirmation: boolean;
   startsAt: string;
   endsAt: string;
+  updatedAt: string;
 };
+
+export type ActiveSystemAnnouncement = Pick<SystemAnnouncement, "id" | "endsAt" | "updatedAt">;
+
+export const ANNOUNCEMENT_ACTIVE_CACHE_SECONDS = 10;
+export const ANNOUNCEMENT_POLL_BASE_MS = 300_000;
+export const ANNOUNCEMENT_POLL_JITTER_MS = 60_000;
+export const ANNOUNCEMENT_INITIAL_RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000, 60_000] as const;
+export const MAX_SESSION_ANNOUNCEMENT_EXCLUSIONS = 20;
+// A delivery claim prevents two tabs from rendering the same notice at once.
+// It is intentionally short lived: a tab that dies before rendering/ACK must
+// not make a required notice disappear permanently.
+export const ANNOUNCEMENT_DELIVERY_LEASE_MS = 30_000;
 
 export type AdminSystemAnnouncement = SystemAnnouncement & {
   status: "active" | "cancelled";
   state: "scheduled" | "active" | "ended" | "cancelled";
   createdBy: string;
   createdAt: string;
-  deliveredCount: number;
   acknowledgedCount: number;
 };
 

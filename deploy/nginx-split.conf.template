@@ -1,0 +1,120 @@
+proxy_cache_path /var/cache/nginx/nara-announcements
+    levels=1:2 keys_zone=nara_announcements:10m max_size=50m inactive=5m use_temp_path=off;
+proxy_cache_path /var/cache/nginx/nara-public
+    levels=1:2 keys_zone=nara_public_cache:20m max_size=200m inactive=10m use_temp_path=off;
+
+map "$http_cookie|$http_authorization" $nara_public_cache_bypass {
+    "|" 0;
+    default 1;
+}
+
+log_format nara_json escape=json
+    '{"time":"$time_iso8601","request_id":"$request_id","host":"$host","method":"$request_method",'
+    '"uri":"$uri","status":$status,"request_time":$request_time,"upstream_time":"$upstream_response_time",'
+    '"upstream":"$upstream_addr","bytes":$body_bytes_sent}';
+
+upstream nara_public {
+    least_conn;
+    server 127.0.0.1:3000 max_fails=3 fail_timeout=10s;
+    keepalive 64;
+}
+
+upstream nara_admin {
+    server 127.0.0.1:3100 max_fails=2 fail_timeout=10s;
+    keepalive 16;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name nara001.co.kr www.nara001.co.kr;
+
+    ssl_certificate /etc/letsencrypt/live/nara001.co.kr/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/nara001.co.kr/privkey.pem;
+    include /etc/nginx/snippets/nara001-cloudflare-allow.conf;
+    client_max_body_size 55m;
+    access_log /var/log/nginx/nara001-public.log nara_json;
+    error_log /var/log/nginx/nara001-public-error.log warn;
+
+    # Temporary compatibility path. Remove these two locations after the
+    # dedicated administrator domain has been verified.
+    location ^~ /admin {
+        proxy_pass http://nara_admin;
+        include /etc/nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+    location ^~ /api/admin {
+        proxy_pass http://nara_admin;
+        include /etc/nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location = /api/announcements/active {
+        proxy_pass http://nara_public;
+        include /etc/nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header Cookie "";
+        proxy_set_header Connection "";
+        proxy_cache nara_announcements;
+        proxy_cache_key "$scheme|$request_method|$host|$uri";
+        proxy_cache_methods GET HEAD;
+        proxy_cache_valid 200 10s;
+        proxy_cache_lock on;
+        proxy_hide_header Set-Cookie;
+    }
+
+    location ~ ^/api/(?:posts|featured-vendors|vendor-posts|events/leaderboard)$ {
+        proxy_pass http://nara_public;
+        include /etc/nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        proxy_cache nara_public_cache;
+        proxy_cache_key "$scheme|$host|$uri|$args";
+        proxy_cache_methods GET HEAD;
+        proxy_cache_valid 200 5s;
+        proxy_cache_valid 404 2s;
+        proxy_cache_lock on;
+        proxy_cache_bypass $nara_public_cache_bypass;
+        proxy_no_cache $nara_public_cache_bypass $upstream_http_set_cookie;
+        proxy_ignore_headers Cache-Control Expires;
+    }
+
+    location / {
+        proxy_pass http://nara_public;
+        include /etc/nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${NARA_ADMIN_HOST};
+
+    ssl_certificate ${NARA_ADMIN_CERTIFICATE};
+    ssl_certificate_key ${NARA_ADMIN_CERTIFICATE_KEY};
+    include /etc/nginx/snippets/nara001-cloudflare-allow.conf;
+    client_max_body_size 55m;
+    access_log /var/log/nginx/nara001-admin.log nara_json;
+    error_log /var/log/nginx/nara001-admin-error.log warn;
+
+    add_header X-Robots-Tag "noindex, nofollow, noarchive" always;
+    location = /robots.txt { return 200 "User-agent: *\nDisallow: /\n"; }
+    location = / { return 302 /admin; }
+    location ^~ /admin { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
+    location ^~ /api/admin { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
+    location = /api/uploads { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
+    location ^~ /api/media/ { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
+    location ^~ /api/support/media/ { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
+    location ^~ /assets/ { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
+    location ^~ /_next/ { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
+    location / { return 404; }
+}

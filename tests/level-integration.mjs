@@ -46,16 +46,24 @@ const adminLogin = await fetch(`${baseUrl}/api/admin/login`, {
 assert.equal(adminLogin.status, 200);
 const adminCookie = adminLogin.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
 
+const getAdminMember = async (cookie, exactUsername) => {
+  const search = new URLSearchParams({ q: exactUsername, sort: "username_asc", pageSize: "10" });
+  const response = await fetch(`${baseUrl}/api/admin/members?${search}`, { headers: { Cookie: cookie } });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  const member = data.members.find((item) => item.username === exactUsername);
+  assert.ok(member, `admin member ${exactUsername} must be returned by the paginated directory`);
+  return member;
+};
+
 const overview = await fetch(`${baseUrl}/api/admin/overview`, { headers: { Cookie: adminCookie } });
 assert.equal(overview.status, 200);
 const ownerOverview = await overview.json();
 assert.equal(ownerOverview.operator.level, 10);
 assert.equal(ownerOverview.operator.role, "owner");
 assert.equal(ownerOverview.operator.canManageAdmins, true);
-const member = ownerOverview.members.find((item) => item.username === username);
-const targetMember = ownerOverview.members.find((item) => item.username === targetUsername);
-assert.ok(member);
-assert.ok(targetMember);
+const member = await getAdminMember(adminCookie, username);
+const targetMember = await getAdminMember(adminCookie, targetUsername);
 assert.equal(member.level, 1);
 assert.equal(Boolean(member.isDirector), false);
 assert.equal(Boolean(member.isPartner), false);
@@ -63,14 +71,14 @@ assert.equal(Boolean(member.isPartner), false);
 const invalidLevel = await fetch(`${baseUrl}/api/admin/members`, {
   method: "PATCH",
   headers: { "Content-Type": "application/json", Cookie: adminCookie },
-  body: JSON.stringify({ id: member.id, nickname, points: 0, level: 11, status: "active" }),
+  body: JSON.stringify({ id: member.id, level: 11 }),
 });
 assert.equal(invalidLevel.status, 400);
 
 const levelUpdate = await fetch(`${baseUrl}/api/admin/members`, {
   method: "PATCH",
   headers: { "Content-Type": "application/json", Cookie: adminCookie },
-  body: JSON.stringify({ id: member.id, nickname, points: 0, level: 7, status: "active" }),
+  body: JSON.stringify({ id: member.id, level: 7 }),
 });
 assert.equal(levelUpdate.status, 200);
 
@@ -91,7 +99,7 @@ assert.equal((await attendance.json()).user.level, 7);
 const promoteToAdmin = await fetch(`${baseUrl}/api/admin/members`, {
   method: "PATCH",
   headers: { "Content-Type": "application/json", Cookie: adminCookie },
-  body: JSON.stringify({ id: member.id, nickname, points: 0, level: 10, status: "active" }),
+  body: JSON.stringify({ id: member.id, level: 10 }),
 });
 assert.equal(promoteToAdmin.status, 200);
 
@@ -110,31 +118,40 @@ assert.equal(levelTenOverviewData.operator.role, "level10");
 assert.equal(levelTenOverviewData.operator.level, 10);
 assert.equal(levelTenOverviewData.operator.canManageAdmins, false);
 
+const forbiddenAdminBatch = await fetch(`${baseUrl}/api/admin/members`, {
+  method: "PATCH",
+  headers: { "Content-Type": "application/json", Cookie: levelTenCookie },
+  body: JSON.stringify({ members: [
+    { id: targetMember.id, points: 125 },
+    { id: member.id, points: 999 },
+  ] }),
+});
+assert.equal(forbiddenAdminBatch.status, 403);
+const untouchedTarget = await getAdminMember(levelTenCookie, targetUsername);
+assert.equal(untouchedTarget.points, 0);
+
 const levelTenEvent = await fetch(`${baseUrl}/api/admin/events`, {
   method: "POST",
   headers: { "Content-Type": "application/json", Cookie: levelTenCookie },
-  body: JSON.stringify({ title: `Lv.10 운영 테스트 ${unique}`, body: "Lv.10 관리자의 이벤트 운영 권한을 확인합니다." }),
+  body: JSON.stringify({ title: `Lv.10 운영 테스트 ${unique}`, authorName: "레벨운영팀", body: "Lv.10 관리자의 이벤트 운영 권한을 확인합니다." }),
 });
 assert.equal(levelTenEvent.status, 201);
 
 const forbiddenPromotion = await fetch(`${baseUrl}/api/admin/members`, {
   method: "PATCH",
   headers: { "Content-Type": "application/json", Cookie: levelTenCookie },
-  body: JSON.stringify({ id: targetMember.id, nickname: targetNickname, points: 0, level: 10, status: "active" }),
+  body: JSON.stringify({ id: targetMember.id, level: 10 }),
 });
 assert.equal(forbiddenPromotion.status, 403);
 
 const allowedMemberManagement = await fetch(`${baseUrl}/api/admin/members`, {
   method: "PATCH",
   headers: { "Content-Type": "application/json", Cookie: levelTenCookie },
-  body: JSON.stringify({ id: targetMember.id, nickname: targetNickname, points: 250, level: 5, status: "active", isDirector: true, isPartner: true }),
+  body: JSON.stringify({ id: targetMember.id, points: 250, level: 5, isDirector: true, isPartner: true }),
 });
 assert.equal(allowedMemberManagement.status, 200);
 
-const affiliateOverview = await fetch(`${baseUrl}/api/admin/overview`, { headers: { Cookie: levelTenCookie } });
-assert.equal(affiliateOverview.status, 200);
-const affiliateMember = (await affiliateOverview.json()).members.find((item) => item.id === targetMember.id);
-assert.ok(affiliateMember);
+const affiliateMember = await getAdminMember(levelTenCookie, targetUsername);
 assert.equal(Boolean(affiliateMember.isDirector), true);
 assert.equal(Boolean(affiliateMember.isPartner), true);
 

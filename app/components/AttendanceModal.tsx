@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ATTENDANCE_STREAK_REWARDS } from "../lib/attendance-rewards";
 import { attendancePointsForLevel } from "../lib/member-level";
 
@@ -24,6 +24,8 @@ type AttendanceData = {
   month: string;
   calendar: Array<{ date: string; points: number }>;
   entries: AttendanceEntry[];
+  entriesTotal: number;
+  nextEntriesCursor: null | { createdAt: string; id: number };
   streakRewards: StreakReward[];
   user: null | { nickname: string; points: number; level: number; attendancePoints: number; attended: boolean; totalDays: number; currentStreak: number; bestStreak: number };
 };
@@ -47,22 +49,56 @@ export default function AttendanceModal({ onClose, onLoginRequired, onAttendance
   const [rewardsOpen, setRewardsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const attendanceRequestSequenceRef = useRef(0);
   const monthKey = `${year}-${pad(monthIndex + 1)}`;
   const attendancePointAmount = data?.user?.attendancePoints ?? attendancePointsForLevel(data?.user?.level ?? 1);
 
   const loadAttendance = useCallback(async () => {
+    const sequence = ++attendanceRequestSequenceRef.current;
     setLoading(true);
     try {
       const response = await fetch(`/api/attendance?month=${monthKey}`, { cache: "no-store" });
       const result = await response.json() as AttendanceData & { error?: string };
       if (!response.ok) throw new Error(result.error ?? "출석 정보를 불러오지 못했습니다.");
-      setData(result);
+      if (sequence === attendanceRequestSequenceRef.current) setData(result);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "출석 정보를 불러오지 못했습니다.");
+      if (sequence === attendanceRequestSequenceRef.current) {
+        showToast(error instanceof Error ? error.message : "출석 정보를 불러오지 못했습니다.");
+      }
     } finally {
-      setLoading(false);
+      if (sequence === attendanceRequestSequenceRef.current) setLoading(false);
     }
   }, [monthKey, showToast]);
+
+  const loadMoreEntries = async () => {
+    const cursor = data?.nextEntriesCursor;
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const search = new URLSearchParams({ month: monthKey, afterCreatedAt: cursor.createdAt, afterId: String(cursor.id) });
+      const response = await fetch(`/api/attendance?${search.toString()}`, { cache: "no-store" });
+      const result = await response.json() as AttendanceData & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "출석 인사를 더 불러오지 못했습니다.");
+      if (data?.today && data.today !== result.today) {
+        const [nextYear, nextMonth] = result.today.split("-").map(Number);
+        setYear(nextYear);
+        setMonthIndex(nextMonth - 1);
+        setData(null);
+        return;
+      }
+      setData((current) => current && current.today === result.today ? {
+        ...current,
+        entries: [...current.entries, ...result.entries.filter((entry) => !current.entries.some((item) => item.id === entry.id))],
+        entriesTotal: result.entriesTotal,
+        nextEntriesCursor: result.nextEntriesCursor,
+      } : current);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "출석 인사를 더 불러오지 못했습니다.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadAttendance(), 0);
@@ -175,8 +211,9 @@ export default function AttendanceModal({ onClose, onLoginRequired, onAttendance
       {data?.user?.attended ? <div className="attendance-complete"><span>출석<br />체크</span><div><h3>오늘 출석체크 완료! 내일도 잊지 마세요!</h3><p>출석체크는 하루 1회, 00시 00분에 갱신됩니다.</p></div></div> : <form className="attendance-form" onSubmit={submitAttendance}><input value={greeting} onChange={(event) => setGreeting(event.target.value)} maxLength={50} aria-label="출석 인사" placeholder="역시 하루의 시작은 출장나라" /><button type="submit" disabled={submitting}>{submitting ? "처리 중…" : "출석체크 도장찍기"}<span aria-hidden="true">출석</span></button></form>}
 
       <div className="attendance-board">
-        <div className="attendance-board-title"><h3>오늘의 출석 인사</h3><span>{loading ? "불러오는 중…" : `${data?.entries.length ?? 0}명이 출석했어요`}</span></div>
+        <div className="attendance-board-title"><h3>오늘의 출석 인사</h3><span>{loading ? "불러오는 중…" : `${data?.entriesTotal ?? data?.entries.length ?? 0}명이 출석했어요`}</span></div>
         <div className="attendance-table"><div className="attendance-tr head"><span>순서</span><span>출석시간</span><span>닉네임</span><span>출석인사</span><span>적립포인트</span><span>누적출석</span></div>{data?.entries.length ? data.entries.map((entry, index) => <div className="attendance-tr" key={entry.id}><span>{index + 1}</span><span>{formatTime(entry.createdAt)}</span><b>{entry.nickname}</b><span>{entry.greeting}</span><strong>{entry.points.toLocaleString()}P</strong><span>{entry.totalDays}일</span></div>) : <p className="attendance-empty">오늘 첫 번째 출석 인사를 남겨보세요.</p>}</div>
+        {data?.nextEntriesCursor && <button type="button" className="attendance-more" onClick={() => void loadMoreEntries()} disabled={loadingMore}>{loadingMore ? "불러오는 중…" : "출석 인사 더보기"}</button>}
       </div>
     </section>
   </div>;

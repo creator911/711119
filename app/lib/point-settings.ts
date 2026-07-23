@@ -100,7 +100,6 @@ async function initializeSettingsTable(db: SettingsDatabase) {
 }
 
 export async function loadPointSettings(db: SettingsDatabase): Promise<PointSystemSettings> {
-  await initializeSettingsTable(db);
   const row = await db.prepare("SELECT value FROM site_settings WHERE key=?").bind(SETTING_KEY).first<{ value: string }>();
   if (!row?.value) return DEFAULT_POINT_SETTINGS;
   try {

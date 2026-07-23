@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { adminSession } from "../../../lib/admin-auth";
 import { memberFromSession, type MemberSession } from "../../../lib/member-auth";
+import { isUniqueConstraintError } from "../../../lib/database-errors";
 import { normalizeRichBody, normalizeRichTitle } from "../../../lib/rich-text";
 import {
   bodyMediaFinalizeStatements,
@@ -139,8 +140,7 @@ export async function PATCH(request: Request) {
     if (mediaClaim && !saveCommitted) await rollbackBodyMedia(env.DB, mediaClaim).catch(() => undefined);
     const mediaStatus = mediaLifecycleErrorStatus(error);
     if (mediaStatus) return Response.json({ error: (error as Error).message }, { status: mediaStatus });
-    const message = error instanceof Error ? error.message : "";
-    if (message.includes("UNIQUE")) return Response.json({ error: "해당 상세지역에는 이미 업체정보 글을 등록했습니다." }, { status: 409 });
+    if (isUniqueConstraintError(error)) return Response.json({ error: "해당 상세지역에는 이미 업체정보 글을 등록했습니다." }, { status: 409 });
     console.error("Vendor post update failed", error);
     return Response.json({ error: "업체정보 글을 수정하지 못했습니다." }, { status: 500 });
   }

@@ -24,10 +24,11 @@ test("attendance points increase by member level", () => {
   assert.equal(attendancePointsForLevel(10), 140);
 });
 
-test("post and comment creation refresh automatic levels while admin changes lock levels", async () => {
-  const [postsRoute, commentsRoute, adminMembersRoute, progressLib, schema, migration] = await Promise.all([
+test("post, comment, and attendance creation refresh automatic levels while admin changes lock levels", async () => {
+  const [postsRoute, commentsRoute, attendanceRoute, adminMembersRoute, progressLib, schema, migration] = await Promise.all([
     readFile(new URL("../app/api/posts/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/posts/[id]/comments/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/attendance/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/members/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/member-level-progress.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
@@ -36,11 +37,19 @@ test("post and comment creation refresh automatic levels while admin changes loc
 
   assert.match(postsRoute, /refreshAutomaticMemberLevel\(env\.DB, user\.id\)/);
   assert.match(commentsRoute, /refreshAutomaticMemberLevel\(env\.DB, user\.id\)/);
+  assert.match(attendanceRoute, /CASE WHEN u\.level_locked=0 AND u\.level<\?/);
+  assert.match(attendanceRoute, /WHERE id=\? AND level=\? AND level_locked=0 AND level<\?/);
+  assert.match(attendanceRoute, /progress\.level >= MAX_AUTOMATIC_MEMBER_LEVEL/);
   assert.match(progressLib, /level_locked AS levelLocked/);
   assert.match(progressLib, /attendanceCount/);
-  assert.match(progressLib, /WHERE id=\? AND level_locked=0 AND level<10/);
+  assert.match(progressLib, /CASE WHEN u\.level_locked=0 AND u\.level<\?/);
+  assert.match(progressLib, /WHERE id=\? AND level=\? AND level_locked=0 AND level<\?/);
+  assert.match(progressLib, /row\.level >= MAX_AUTOMATIC_MEMBER_LEVEL/);
   assert.match(adminMembersRoute, /level_locked = \?/);
-  assert.match(adminMembersRoute, /current\.level !== level \? 1/);
+  assert.match(adminMembersRoute, /current\.level === 10 \|\| nextLevel === 10/);
+  assert.match(adminMembersRoute, /const levelWasChanged = update\.level !== undefined && update\.level !== update\.current\.level/);
+  assert.match(adminMembersRoute, /update\.levelLocked !== undefined \|\| levelWasChanged/);
+  assert.match(adminMembersRoute, /update\.levelLocked === undefined \? 1/);
   assert.match(schema, /levelLocked: integer\("level_locked"/);
   assert.match(migration, /ALTER TABLE users ADD COLUMN level_locked integer NOT NULL DEFAULT 0/);
   assert.match(migration, /UPDATE users SET level_locked=1 WHERE level<>1/);

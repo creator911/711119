@@ -1,6 +1,11 @@
 import { env } from "cloudflare:workers";
 import { memberFromSession } from "../../../../lib/member-auth";
 import { loadPostPoll } from "../../../../lib/post-poll-results";
+import { isUniqueConstraintError } from "../../../../lib/database-errors";
+import {
+  consumeDistributedRateLimit,
+  distributedRateLimitResponse,
+} from "../../../../lib/distributed-rate-limit";
 
 const postIdOf = (request: Request) => {
   const segments = new URL(request.url).pathname.split("/").filter(Boolean);
@@ -13,6 +18,8 @@ export async function POST(request: Request) {
   if (!postId) return Response.json({ error: "게시글 번호를 확인해 주세요." }, { status: 400 });
   const member = await memberFromSession(request);
   if (!member) return Response.json({ error: "로그인 후 투표할 수 있습니다." }, { status: 401 });
+  const distributedLimit = await consumeDistributedRateLimit(env.CACHE, "post-poll", String(member.id), 120, 60);
+  if (distributedLimit && !distributedLimit.allowed) return distributedRateLimitResponse(distributedLimit);
   try {
     const payload = await request.json() as { optionId?: unknown };
     const optionId = Number(payload.optionId);
@@ -31,7 +38,7 @@ export async function POST(request: Request) {
       .bind(option.pollId, option.id, member.id, new Date().toISOString()).run();
     return Response.json({ poll: await loadPostPoll(env.DB, postId, member.id) });
   } catch (error) {
-    if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) {
+    if (isUniqueConstraintError(error)) {
       return Response.json({ error: "이 투표에는 이미 참여했습니다." }, { status: 409 });
     }
     console.error("Post poll vote failed", error);

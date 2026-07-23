@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import AdminPointSettings from "./AdminPointSettings";
 import AdminShop from "./AdminShop";
 import AdminSupport from "./AdminSupport";
@@ -10,9 +10,19 @@ import AdminEventRewards from "./AdminEventRewards";
 import RichTitleInput from "../components/RichTitleInput";
 import RichTextEditor from "../components/RichTextEditor";
 import { normalizeAdminMemberFlags } from "../lib/admin-member-flags";
+import { adminMemberPrefixSearch, MAX_ADMIN_MEMBER_SEARCH_CHARACTERS, MIN_ADMIN_MEMBER_SEARCH_CHARACTERS } from "../lib/admin-member-search";
+import { buildAdminMemberPatch, chunkAdminMemberPatches, type AdminMemberPatch } from "../lib/admin-member-updates";
+import {
+  ADMIN_PAGE_SIZES,
+  DEFAULT_ADMIN_PAGE_SIZE,
+  MAX_ADMIN_MEMBER_BATCH_UPDATES,
+  groupedAdminPageNumbers,
+  type AdminPageSize,
+} from "../lib/admin-pagination";
 import { vendorRegionGroups } from "../lib/vendor-regions";
-import { TITLE_COLOR_OPTIONS, type TitleColor } from "../lib/title-colors";
+import { type TitleColor } from "../lib/title-colors";
 import { renderRichTitle } from "../lib/rich-text";
+import { type SystemHealth } from "../lib/system-health";
 
 type Member = {
   id: number;
@@ -32,23 +42,58 @@ type Member = {
 type Post = { id: number; category: string; title: string; titleColor: TitleColor; author: string; views: number; likes: number; isNotice: boolean; status: string; createdAt: string };
 type BlockedIp = { ip: string; reason: string; createdAt: string };
 type DirectorRegion = { userId: number; region: string; district: string };
-type DirectorMember = Pick<Member, "id" | "username" | "nickname" | "level" | "status">;
+type DirectorMember = Pick<Member, "id" | "username" | "nickname" | "level" | "status"> & { assignmentCount: number };
 type AffiliateMember = Pick<Member, "id" | "username" | "nickname" | "level" | "points" | "status" | "isDirector" | "isPartner" | "createdAt">;
 type FeaturedVendorPermission = { userId: number; slot: number };
 type AdminTab = "posts" | "events" | "notices" | "announcements" | "shop" | "points" | "members" | "security" | "support" | "partner" | "directors" | "affiliates" | "domain";
 type Operator = { username: string; role: "owner" | "level10"; level: 10; canManageAdmins: boolean };
+type MemberSort = "created_desc" | "created_asc" | "points_desc" | "points_asc" | "director_first" | "partner_first" | "username_asc" | "username_desc" | "nickname_asc" | "nickname_desc" | "level_desc" | "level_asc";
+type MemberListResponse = { members: Member[]; total: number; page: number; pageSize: number; totalPages: number; sort: MemberSort; query: string; error?: string };
+type DirectorListResponse = { directors: DirectorMember[]; total: number; page: number; pageSize: number; totalPages: number; error?: string };
 type Overview = {
   operator: Operator;
+  health: SystemHealth;
   stats: { totalMembers: number; activeMembers: number; todayMembers: number; todayPosts: number; todayAttendance: number; supportUnread: number; partnerUnread: number; shopLowStockProducts: number };
-  members: Member[];
   posts: Post[];
   blockedIps: BlockedIp[];
 };
 
-const emptyOverview: Overview = { operator: { username: "", role: "owner", level: 10, canManageAdmins: false }, stats: { totalMembers: 0, activeMembers: 0, todayMembers: 0, todayPosts: 0, todayAttendance: 0, supportUnread: 0, partnerUnread: 0, shopLowStockProducts: 0 }, members: [], posts: [], blockedIps: [] };
+const emptyOverview: Overview = { operator: { username: "", role: "owner", level: 10, canManageAdmins: false }, health: { status: "unavailable", database: "error", migrations: "unknown", application: "not_ready", missingSchemaObjects: 0, latencyMs: 0, checkedAt: "" }, stats: { totalMembers: 0, activeMembers: 0, todayMembers: 0, todayPosts: 0, todayAttendance: 0, supportUnread: 0, partnerUnread: 0, shopLowStockProducts: 0 }, posts: [], blockedIps: [] };
 const formatDate = (value: string) => value ? new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)) : "—";
 const DEFAULT_MAIN_DOMAIN = "https://nara001.co.kr";
+const MEMBER_SORT_OPTIONS: Array<{ value: MemberSort; label: string }> = [
+  { value: "created_desc", label: "가입일 최근순" },
+  { value: "created_asc", label: "가입일 오래된순" },
+  { value: "points_desc", label: "포인트 많은순" },
+  { value: "points_asc", label: "포인트 적은순" },
+  { value: "director_first", label: "실장 우선" },
+  { value: "partner_first", label: "제휴 우선" },
+  { value: "username_asc", label: "아이디 A → Z" },
+  { value: "username_desc", label: "아이디 Z → A" },
+  { value: "nickname_asc", label: "닉네임 가나다순" },
+  { value: "nickname_desc", label: "닉네임 역순" },
+  { value: "level_desc", label: "레벨 높은순" },
+  { value: "level_asc", label: "레벨 낮은순" },
+];
 const adminTitles: Record<AdminTab, string> = { posts: "최신글 리스트", events: "이벤트 관리", notices: "공지 관리", announcements: "전체 알림 공지", shop: "상점 수정", points: "포인트 지급 시스템", members: "회원정보 관리", security: "보안·IP 관리", support: "고객센터 상담", partner: "제휴문의 상담", directors: "실장", affiliates: "제휴회원", domain: "메인페이지 도메인" };
+
+function AdminPageSizeButtons({ value, disabled, onChange, label }: { value: AdminPageSize; disabled: boolean; onChange: (value: AdminPageSize) => void; label: string }) {
+  return <div className="admin-page-size-buttons" role="group" aria-label={label}>
+    {ADMIN_PAGE_SIZES.map((pageSize) => <button key={pageSize} type="button" aria-pressed={value === pageSize} disabled={disabled} onClick={() => onChange(pageSize)}>{pageSize.toLocaleString()}개씩 보기</button>)}
+  </div>;
+}
+
+function AdminPagination({ page, totalPages, pages, disabled, onChange, label }: { page: number; totalPages: number; pages: number[]; disabled: boolean; onChange: (page: number) => void; label: string }) {
+  const firstPage = pages[0] ?? 1;
+  const lastPage = pages.at(-1) ?? 1;
+  return <nav className="admin-pagination" aria-label={label}>
+    <button type="button" onClick={() => onChange(Math.max(1, firstPage - 1))} disabled={disabled || firstPage <= 1}>‹ 이전 20</button>
+    <div className="admin-pagination-pages">
+      {pages.map((pageNumber) => <button type="button" className={pageNumber === page ? "active" : ""} aria-current={pageNumber === page ? "page" : undefined} key={pageNumber} onClick={() => onChange(pageNumber)} disabled={disabled}>{pageNumber}</button>)}
+    </div>
+    <button type="button" onClick={() => onChange(Math.min(totalPages, lastPage + 1))} disabled={disabled || lastPage >= totalPages}>다음 20 ›</button>
+  </nav>;
+}
 
 export default function AdminConsole() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
@@ -56,8 +101,18 @@ export default function AdminConsole() {
   const [toast, setToast] = useState("");
   const [overview, setOverview] = useState<Overview>(emptyOverview);
   const [memberRows, setMemberRows] = useState<Member[]>([]);
+  const [memberBaselines, setMemberBaselines] = useState<Record<number, Member>>({});
   const [dirtyMemberIds, setDirtyMemberIds] = useState<number[]>([]);
   const [query, setQuery] = useState("");
+  const [memberSort, setMemberSort] = useState<MemberSort>("created_desc");
+  const [memberPage, setMemberPage] = useState(1);
+  const [memberPageSize, setMemberPageSize] = useState<AdminPageSize>(DEFAULT_ADMIN_PAGE_SIZE);
+  const [memberTotal, setMemberTotal] = useState(0);
+  const [memberTotalPages, setMemberTotalPages] = useState(1);
+  const [memberListLoading, setMemberListLoading] = useState(false);
+  const [memberListLoadedKey, setMemberListLoadedKey] = useState("");
+  const [memberListError, setMemberListError] = useState("");
+  const [memberReloadToken, setMemberReloadToken] = useState(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [newIp, setNewIp] = useState("");
@@ -66,9 +121,20 @@ export default function AdminConsole() {
   const [directorRegions, setDirectorRegions] = useState<Record<number, DirectorRegion[]>>({});
   const [directorMembers, setDirectorMembers] = useState<DirectorMember[]>([]);
   const [directorRegionsLoading, setDirectorRegionsLoading] = useState(false);
+  const [directorPage, setDirectorPage] = useState(1);
+  const [directorPageSize, setDirectorPageSize] = useState<AdminPageSize>(DEFAULT_ADMIN_PAGE_SIZE);
+  const [directorTotal, setDirectorTotal] = useState(0);
+  const [directorTotalPages, setDirectorTotalPages] = useState(1);
+  const [directorListLoadedKey, setDirectorListLoadedKey] = useState("");
+  const [directorListError, setDirectorListError] = useState("");
+  const [directorReloadToken, setDirectorReloadToken] = useState(0);
+  const directorRefreshPendingRef = useRef(false);
   const [expandedDirectorId, setExpandedDirectorId] = useState<number | null>(null);
   const [dirtyDirectorIds, setDirtyDirectorIds] = useState<number[]>([]);
+  const dirtyDirectorIdsRef = useRef<number[]>([]);
   const [savingDirectorId, setSavingDirectorId] = useState<number | null>(null);
+  const [directorAssignmentsLoadingId, setDirectorAssignmentsLoadingId] = useState<number | null>(null);
+  const directorAssignmentAbortRef = useRef<AbortController | null>(null);
   const [affiliateMembers, setAffiliateMembers] = useState<AffiliateMember[]>([]);
   const [affiliateSlots, setAffiliateSlots] = useState<Record<number, number[]>>({});
   const [affiliatePermissionsLoading, setAffiliatePermissionsLoading] = useState(false);
@@ -88,10 +154,7 @@ export default function AdminConsole() {
       if (response.status === 401) { setSignedIn(false); return false; }
       const result = await response.json() as Overview & { error?: string };
       if (!response.ok) throw new Error(result.error ?? "관리자 정보를 불러오지 못했습니다.");
-      const normalizedMembers = result.members.map(normalizeAdminMemberFlags);
-      setOverview({ ...result, members: normalizedMembers });
-      setMemberRows(normalizedMembers);
-      setDirtyMemberIds([]);
+      setOverview(result);
       setSignedIn(true);
       return true;
     } catch (error) {
@@ -109,34 +172,103 @@ export default function AdminConsole() {
   }, [loadOverview]);
 
   useEffect(() => {
-    if (!signedIn || tab !== "directors") return;
+    if (!signedIn) return;
     let cancelled = false;
+    const refreshHealth = async () => {
+      try {
+        const response = await fetch("/api/admin/health", { cache: "no-store" });
+        if (response.status === 401) { if (!cancelled) setSignedIn(false); return; }
+        const result = await response.json() as { health?: SystemHealth };
+        if (!cancelled && result.health) setOverview((current) => ({ ...current, health: result.health! }));
+      } catch {
+        if (!cancelled) setOverview((current) => ({ ...current, health: { ...current.health, status: "unavailable", database: "error", cache: "error", storage: "error", worker: "error", application: "not_ready", checkedAt: new Date().toISOString() } }));
+      }
+    };
+    const timer = window.setInterval(() => void refreshHealth(), 30_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [signedIn]);
+
+  useEffect(() => {
+    const requestKey = `${query.trim()}\u0000${memberSort}\u0000${memberPage}\u0000${memberPageSize}`;
+    if (!signedIn || tab !== "members" || dirtyMemberIds.length || memberListLoadedKey === requestKey || (query.trim().length > 0 && query.trim().length < MIN_ADMIN_MEMBER_SEARCH_CHARACTERS)) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setMemberListLoading(true);
+      setMemberListError("");
+      const search = new URLSearchParams({ sort: memberSort, page: String(memberPage), pageSize: String(memberPageSize) });
+      if (query.trim()) search.set("q", query.trim());
+      void fetch(`/api/admin/members?${search.toString()}`, { cache: "no-store", signal: controller.signal })
+        .then(async (response) => {
+          const result = await response.json() as MemberListResponse;
+          if (response.status === 401) { setSignedIn(false); return; }
+          if (!response.ok) throw new Error(result.error ?? "회원 목록을 불러오지 못했습니다.");
+          const normalizedMembers = result.members.map(normalizeAdminMemberFlags);
+          setMemberRows(normalizedMembers);
+          setMemberBaselines(Object.fromEntries(normalizedMembers.map((member) => [member.id, member])));
+          setDirtyMemberIds([]);
+          setMemberTotal(result.total);
+          setMemberTotalPages(result.totalPages);
+          setMemberListLoadedKey(result.page === memberPage ? requestKey : `${query.trim()}\u0000${memberSort}\u0000${result.page}\u0000${result.pageSize}`);
+          if (result.page !== memberPage) setMemberPage(result.page);
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          const message = error instanceof Error ? error.message : "회원 목록을 불러오지 못했습니다.";
+          setMemberListError(message);
+          setToast(message);
+          window.setTimeout(() => setToast(""), 2600);
+        })
+        .finally(() => { if (!controller.signal.aborted) setMemberListLoading(false); });
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+      setMemberListLoading(false);
+    };
+  }, [dirtyMemberIds.length, memberListLoadedKey, memberPage, memberPageSize, memberReloadToken, memberSort, query, signedIn, tab]);
+
+  useEffect(() => {
+    const requestKey = `${directorPage}\u0000${directorPageSize}`;
+    if (!signedIn || tab !== "directors" || dirtyDirectorIds.length || directorListLoadedKey === requestKey) return;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setDirectorRegionsLoading(true);
-      void fetch("/api/admin/director-regions", { cache: "no-store" })
+      setDirectorListError("");
+      const search = new URLSearchParams({ page: String(directorPage), pageSize: String(directorPageSize) });
+      void fetch(`/api/admin/director-regions?${search.toString()}`, { cache: "no-store", signal: controller.signal })
         .then(async (response) => {
-          const result = await response.json() as { directors?: DirectorMember[]; assignments?: DirectorRegion[]; error?: string };
+          const result = await response.json() as DirectorListResponse;
+          if (response.status === 401) { setSignedIn(false); return; }
           if (!response.ok) throw new Error(result.error ?? "실장 담당지역을 불러오지 못했습니다.");
-          if (cancelled) return;
-          const grouped = (result.assignments ?? []).reduce<Record<number, DirectorRegion[]>>((rows, assignment) => {
-            (rows[assignment.userId] ??= []).push(assignment);
-            return rows;
-          }, {});
-          setDirectorMembers(result.directors ?? []);
-          setDirectorRegions(grouped);
+          if (controller.signal.aborted) return;
+          directorAssignmentAbortRef.current?.abort();
+          directorAssignmentAbortRef.current = null;
+          setDirectorMembers(result.directors);
+          setDirectorRegions({});
+          setDirectorAssignmentsLoadingId(null);
+          setDirectorTotal(result.total);
+          setDirectorTotalPages(result.totalPages);
+          setDirectorListLoadedKey(result.page === directorPage ? requestKey : `${result.page}\u0000${result.pageSize}`);
+          if (result.page !== directorPage) setDirectorPage(result.page);
+          setExpandedDirectorId(null);
+          dirtyDirectorIdsRef.current = [];
           setDirtyDirectorIds([]);
         })
         .catch((error) => {
-          if (cancelled) return;
-          setToast(error instanceof Error ? error.message : "실장 담당지역을 불러오지 못했습니다.");
+          if (controller.signal.aborted) return;
+          const message = error instanceof Error ? error.message : "실장 담당지역을 불러오지 못했습니다.";
+          setDirectorListError(message);
+          setToast(message);
           window.setTimeout(() => setToast(""), 2600);
         })
         .finally(() => {
-          if (!cancelled) setDirectorRegionsLoading(false);
+          if (!controller.signal.aborted) setDirectorRegionsLoading(false);
         });
     }, 0);
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [signedIn, tab]);
+    return () => { window.clearTimeout(timer); controller.abort(); setDirectorRegionsLoading(false); };
+  }, [directorListLoadedKey, directorPage, directorPageSize, directorReloadToken, dirtyDirectorIds.length, signedIn, tab]);
+
+  useEffect(() => () => directorAssignmentAbortRef.current?.abort(), []);
 
   useEffect(() => {
     if (!signedIn || tab !== "affiliates") return;
@@ -215,8 +347,28 @@ export default function AdminConsole() {
     await fetch("/api/admin/logout", { method: "POST" });
     setOverview(emptyOverview);
     setMemberRows([]);
+    setMemberBaselines({});
+    setDirtyMemberIds([]);
+    setQuery("");
+    setMemberSort("created_desc");
+    setMemberPage(1);
+    setMemberPageSize(DEFAULT_ADMIN_PAGE_SIZE);
+    setMemberTotal(0);
+    setMemberTotalPages(1);
+    setMemberListLoadedKey("");
+    setMemberListError("");
+    setMemberReloadToken(0);
     setDirectorMembers([]);
     setDirectorRegions({});
+    setDirectorPage(1);
+    setDirectorPageSize(DEFAULT_ADMIN_PAGE_SIZE);
+    setDirectorTotal(0);
+    setDirectorTotalPages(1);
+    setDirectorListLoadedKey("");
+    setDirectorListError("");
+    setDirectorReloadToken(0);
+    directorRefreshPendingRef.current = false;
+    dirtyDirectorIdsRef.current = [];
     setDirtyDirectorIds([]);
     setExpandedDirectorId(null);
     setAffiliateMembers([]);
@@ -250,24 +402,69 @@ export default function AdminConsole() {
   };
 
   const changeMember = (id: number, changes: Partial<Member>) => {
-    setMemberRows((rows) => rows.map((row) => row.id === id ? { ...row, ...changes } : row));
-    setDirtyMemberIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+    const current = memberRows.find((member) => member.id === id);
+    const baseline = memberBaselines[id];
+    if (!current || !baseline) return;
+    const next = { ...current, ...changes };
+    const patch = buildAdminMemberPatch(next, baseline);
+    setMemberRows((rows) => rows.map((row) => row.id === id ? next : row));
+    setDirtyMemberIds((ids) => patch
+      ? ids.includes(id) ? ids : [...ids, id]
+      : ids.filter((memberId) => memberId !== id));
+  };
+
+  const changeMemberQuery = (value: string) => {
+    if (!adminMemberPrefixSearch(value)) {
+      notify("검색어가 너무 깁니다. 한글·특수문자는 더 짧게 입력해 주세요.");
+      return;
+    }
+    setQuery(value);
+    setMemberPage(1);
+    setMemberListError("");
   };
 
   const saveMembers = async () => {
     if (!dirtyMemberIds.length || submitting) return notify("변경된 회원 정보가 없습니다.");
     setSubmitting(true);
     try {
-      const changed = memberRows.filter((member) => dirtyMemberIds.includes(member.id));
-      const responses = await Promise.all(changed.map((member) => fetch("/api/admin/members", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: member.id, nickname: member.nickname, points: member.points, level: member.level, status: member.status, isDirector: member.isDirector, isPartner: member.isPartner }) })));
-      const failed = responses.find((response) => !response.ok);
-      if (failed) throw new Error(((await failed.json()) as { error?: string }).error ?? "회원 정보 저장에 실패했습니다.");
+      const updates = memberRows.reduce<AdminMemberPatch[]>((patches, member) => {
+        if (!dirtyMemberIds.includes(member.id)) return patches;
+        const baseline = memberBaselines[member.id];
+        const patch = baseline ? buildAdminMemberPatch(member, baseline) : null;
+        if (patch) patches.push(patch);
+        return patches;
+      }, []);
+      if (!updates.length) {
+        setDirtyMemberIds([]);
+        notify("변경된 회원 정보가 없습니다.");
+        return;
+      }
+      let savedCount = 0;
+      for (const members of chunkAdminMemberPatches(updates, MAX_ADMIN_MEMBER_BATCH_UPDATES)) {
+        const response = await fetch("/api/admin/members", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ members }) });
+        if (!response.ok) {
+          const message = ((await response.json()) as { error?: string }).error ?? "회원 정보 저장에 실패했습니다.";
+          throw new Error(savedCount ? `${savedCount}명 저장 후 중단되었습니다. 남은 변경을 다시 저장해 주세요. (${message})` : message);
+        }
+        const savedIds = new Set(members.map((member) => member.id));
+        savedCount += savedIds.size;
+        setMemberBaselines((baselines) => {
+          const next = { ...baselines };
+          for (const member of memberRows) if (savedIds.has(member.id)) next[member.id] = member;
+          return next;
+        });
+        setDirtyMemberIds((ids) => ids.filter((id) => !savedIds.has(id)));
+      }
       setDirtyMemberIds([]);
+      setMemberListLoadedKey("");
+      if (dirtyDirectorIdsRef.current.length) {
+        directorRefreshPendingRef.current = true;
+      } else setDirectorListLoadedKey("");
+      setMemberReloadToken((token) => token + 1);
       notify("회원 정보를 저장했습니다.");
-      await loadOverview();
+      await loadOverview(true);
     } catch (error) {
       notify(error instanceof Error ? error.message : "회원 정보 저장에 실패했습니다.");
-      await loadOverview(true);
     } finally {
       setSubmitting(false);
     }
@@ -313,7 +510,9 @@ export default function AdminConsole() {
   };
 
   const markDirectorRegionDirty = (userId: number) => {
-    setDirtyDirectorIds((ids) => ids.includes(userId) ? ids : [...ids, userId]);
+    const next = dirtyDirectorIdsRef.current.includes(userId) ? dirtyDirectorIdsRef.current : [...dirtyDirectorIdsRef.current, userId];
+    dirtyDirectorIdsRef.current = next;
+    setDirtyDirectorIds(next);
   };
 
   const toggleDirectorRegion = (userId: number, region: string, district: string) => {
@@ -361,12 +560,53 @@ export default function AdminConsole() {
         ...current,
         [userId]: (result.assignments ?? regions).map((item) => ({ userId, ...item })),
       }));
-      setDirtyDirectorIds((ids) => ids.filter((id) => id !== userId));
+      const remainingDirtyIds = dirtyDirectorIdsRef.current.filter((id) => id !== userId);
+      dirtyDirectorIdsRef.current = remainingDirtyIds;
+      setDirtyDirectorIds(remainingDirtyIds);
+      if (!remainingDirtyIds.length && directorRefreshPendingRef.current) {
+        directorRefreshPendingRef.current = false;
+        setDirectorListLoadedKey("");
+        setDirectorReloadToken((token) => token + 1);
+      }
       notify("실장 담당지역을 저장했습니다.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "실장 담당지역 저장에 실패했습니다.");
     } finally {
       setSavingDirectorId(null);
+    }
+  };
+
+  const toggleDirectorEditor = async (member: DirectorMember) => {
+    if (expandedDirectorId === member.id) {
+      directorAssignmentAbortRef.current?.abort();
+      directorAssignmentAbortRef.current = null;
+      setDirectorAssignmentsLoadingId(null);
+      setExpandedDirectorId(null);
+      return;
+    }
+    setExpandedDirectorId(member.id);
+    if (Object.hasOwn(directorRegions, member.id)) return;
+
+    directorAssignmentAbortRef.current?.abort();
+    const controller = new AbortController();
+    directorAssignmentAbortRef.current = controller;
+    setDirectorAssignmentsLoadingId(member.id);
+    try {
+      const response = await fetch(`/api/admin/director-regions?userId=${member.id}`, { cache: "no-store", signal: controller.signal });
+      const result = await response.json() as { assignments?: DirectorRegion[]; error?: string };
+      if (response.status === 401) { setSignedIn(false); return; }
+      if (!response.ok) throw new Error(result.error ?? "실장 담당지역을 불러오지 못했습니다.");
+      if (controller.signal.aborted) return;
+      setDirectorRegions((current) => ({ ...current, [member.id]: result.assignments ?? [] }));
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      notify(error instanceof Error ? error.message : "실장 담당지역을 불러오지 못했습니다.");
+      setExpandedDirectorId((current) => current === member.id ? null : current);
+    } finally {
+      if (!controller.signal.aborted) {
+        setDirectorAssignmentsLoadingId(null);
+        directorAssignmentAbortRef.current = null;
+      }
     }
   };
 
@@ -403,10 +643,21 @@ export default function AdminConsole() {
     }
   };
 
-  const filteredMembers = useMemo(() => {
-    const keyword = query.trim().toLowerCase();
-    return keyword ? memberRows.filter((member) => `${member.username} ${member.nickname}`.toLowerCase().includes(keyword)) : memberRows;
-  }, [memberRows, query]);
+  const memberPageNumbers = groupedAdminPageNumbers(memberPage, memberTotalPages);
+  const memberRangeStart = memberTotal ? (memberPage - 1) * memberPageSize + 1 : 0;
+  const memberRangeEnd = Math.min(memberPage * memberPageSize, memberTotal);
+  const memberRequestKey = `${query.trim()}\u0000${memberSort}\u0000${memberPage}\u0000${memberPageSize}`;
+  const memberListPending = memberListLoadedKey !== memberRequestKey;
+  const memberListBusy = memberListLoading || memberListPending;
+  const visibleMemberRows = memberListPending ? [] : memberRows;
+  const directorPageNumbers = groupedAdminPageNumbers(directorPage, directorTotalPages);
+  const directorRangeStart = directorTotal ? (directorPage - 1) * directorPageSize + 1 : 0;
+  const directorRangeEnd = Math.min(directorPage * directorPageSize, directorTotal);
+  const directorRequestKey = `${directorPage}\u0000${directorPageSize}`;
+  const directorListPending = directorListLoadedKey !== directorRequestKey;
+  const directorListBusy = directorRegionsLoading || directorListPending;
+  const visibleDirectorMembers = directorListPending ? [] : directorMembers;
+  const directorNavigationLocked = Boolean(dirtyDirectorIds.length) || savingDirectorId !== null || directorAssignmentsLoadingId !== null || directorListBusy;
   const eventPosts = overview.posts.filter((post) => post.category === "events");
   const noticePosts = overview.posts.filter((post) => post.category === "notices");
 
@@ -415,9 +666,9 @@ export default function AdminConsole() {
   if (!signedIn) return <main className="admin-login"><form onSubmit={login} aria-label="보안 로그인"><input name="username" autoComplete="username" placeholder="아이디" aria-label="아이디" required /><input name="password" type="password" autoComplete="current-password" placeholder="비밀번호" aria-label="비밀번호" required /><button type="submit" disabled={submitting}>{submitting ? "확인 중…" : "보안 로그인"}</button></form>{toast && <div className="admin-toast" role="status">{toast}</div>}</main>;
 
   return <div className="admin-shell">
-    <aside className="admin-side"><div className="admin-brand"><span>CN</span><b>운영 콘솔</b></div><nav><button className={tab === "posts" ? "active" : ""} onClick={() => setTab("posts")}><span>01</span>최신글</button><button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}><span>02</span>이벤트 관리</button><button className={tab === "notices" ? "active" : ""} onClick={() => setTab("notices")}><span>03</span>공지 관리</button><button className={tab === "announcements" ? "active" : ""} onClick={() => setTab("announcements")}><span>04</span>전체 알림 공지</button><button className={tab === "shop" ? "active" : ""} onClick={() => setTab("shop")}><span>05</span>상점 수정{overview.stats.shopLowStockProducts > 0 && <em title="자동상품 지급 이미지 확인 필요">{overview.stats.shopLowStockProducts > 99 ? "99+" : overview.stats.shopLowStockProducts}</em>}</button><button className={tab === "points" ? "active" : ""} onClick={() => setTab("points")}><span>06</span>포인트 지급</button><button className={tab === "members" ? "active" : ""} onClick={() => setTab("members")}><span>07</span>회원 관리</button><button className={tab === "security" ? "active" : ""} onClick={() => setTab("security")}><span>08</span>보안·IP</button><button className={tab === "support" ? "active" : ""} onClick={() => setTab("support")}><span>09</span>고객센터{overview.stats.supportUnread > 0 && <em>{overview.stats.supportUnread > 99 ? "99+" : overview.stats.supportUnread}</em>}</button><button className={tab === "partner" ? "active" : ""} onClick={() => setTab("partner")}><span>10</span>제휴문의{overview.stats.partnerUnread > 0 && <em>{overview.stats.partnerUnread > 99 ? "99+" : overview.stats.partnerUnread}</em>}</button><button className={tab === "directors" ? "active" : ""} onClick={() => setTab("directors")}><span>11</span>실장</button><button className={tab === "affiliates" ? "active" : ""} onClick={() => setTab("affiliates")}><span>12</span>제휴회원</button><button className={tab === "domain" ? "active" : ""} onClick={() => setTab("domain")}><span>13</span>메인페이지 도메인</button></nav><div className="admin-user"><div>10</div><p><b>{overview.operator.username}</b><small>{overview.operator.role === "owner" ? "OWNER · Lv.10" : "ADMIN · Lv.10"}</small></p></div></aside>
+    <aside className="admin-side"><div className="admin-brand"><span>CN</span><b>운영 콘솔</b></div><nav><button className={tab === "posts" ? "active" : ""} onClick={() => setTab("posts")}><span>01</span>최신글</button><button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}><span>02</span>이벤트 관리</button><button className={tab === "notices" ? "active" : ""} onClick={() => setTab("notices")}><span>03</span>공지 관리</button><button className={tab === "announcements" ? "active" : ""} onClick={() => setTab("announcements")}><span>04</span>전체 알림 공지</button><button className={tab === "shop" ? "active" : ""} onClick={() => setTab("shop")}><span>05</span>상점 수정{overview.stats.shopLowStockProducts > 0 && <em title="자동상품 지급 이미지 확인 필요">{overview.stats.shopLowStockProducts > 99 ? "99+" : overview.stats.shopLowStockProducts}</em>}</button><button className={tab === "points" ? "active" : ""} onClick={() => setTab("points")}><span>06</span>포인트 지급</button><button className={tab === "members" ? "active" : ""} onClick={() => { setTab("members"); if (!dirtyMemberIds.length) setMemberListLoadedKey(""); }}><span>07</span>회원 관리</button><button className={tab === "security" ? "active" : ""} onClick={() => setTab("security")}><span>08</span>보안·IP</button><button className={tab === "support" ? "active" : ""} onClick={() => setTab("support")}><span>09</span>고객센터{overview.stats.supportUnread > 0 && <em>{overview.stats.supportUnread > 99 ? "99+" : overview.stats.supportUnread}</em>}</button><button className={tab === "partner" ? "active" : ""} onClick={() => setTab("partner")}><span>10</span>제휴문의{overview.stats.partnerUnread > 0 && <em>{overview.stats.partnerUnread > 99 ? "99+" : overview.stats.partnerUnread}</em>}</button><button className={tab === "directors" ? "active" : ""} onClick={() => setTab("directors")}><span>11</span>실장</button><button className={tab === "affiliates" ? "active" : ""} onClick={() => setTab("affiliates")}><span>12</span>제휴회원</button><button className={tab === "domain" ? "active" : ""} onClick={() => setTab("domain")}><span>13</span>메인페이지 도메인</button></nav><div className="admin-user"><div>10</div><p><b>{overview.operator.username}</b><small>{overview.operator.role === "owner" ? "OWNER · Lv.10" : "ADMIN · Lv.10"}</small></p></div></aside>
     <main className="admin-main">
-      <header><div><p>CONTROL CENTER</p><h1>{adminTitles[tab]}</h1></div><div className="admin-top-actions"><span><i /> 시스템 정상</span><Link href="/">사이트 보기 ↗</Link><button onClick={logout}>로그아웃</button></div></header>
+      <header><div><p>CONTROL CENTER</p><h1>{adminTitles[tab]}</h1></div><div className="admin-top-actions"><span className="system-health" data-status={overview.health.status} title={`DB ${overview.health.database} · 캐시 ${overview.health.cache} · 저장소 ${overview.health.storage} · 작업서버 ${overview.health.worker} · 마이그레이션 ${overview.health.migrations} · ${overview.health.latencyMs}ms`}><i /> {overview.health.status === "healthy" ? "시스템 정상" : overview.health.status === "degraded" ? "시스템 구성 확인 필요" : "시스템 점검 필요"}</span><Link href="/">사이트 보기 ↗</Link><button onClick={logout}>로그아웃</button></div></header>
       <section className="admin-stats"><article><span>오늘 가입</span><b>{overview.stats.todayMembers.toLocaleString()}</b><small>오늘 00시 기준</small></article><article><span>활성 회원</span><b>{overview.stats.activeMembers.toLocaleString()}</b><small>전체 {overview.stats.totalMembers.toLocaleString()}명</small></article><article><span>오늘 게시글</span><b>{overview.stats.todayPosts.toLocaleString()}</b><small>실제 등록 데이터</small></article><article><span>오늘 출석</span><b>{overview.stats.todayAttendance.toLocaleString()}</b><small>레벨별 출석 포인트 자동 적립</small></article></section>
       {tab === "posts" && <section className="admin-panel"><div className="panel-title"><div><h2>최신 등록글</h2><p>실제 데이터베이스에 저장된 게시글만 표시됩니다.</p></div><button onClick={() => void loadOverview()}>새로고침</button></div><div className="admin-table posts-table"><div className="admin-tr head"><span>테마</span><b>제목</b><span>작성자</span><span>작성 시각</span><span>상태</span><span>조회·추천</span></div>{overview.posts.length ? overview.posts.map((post) => <div className="admin-tr" key={post.id}><span><em>{post.category}</em></span><b style={post.titleColor ? { color: post.titleColor } : undefined} dangerouslySetInnerHTML={{ __html: renderRichTitle(post.title) }} /><span>{post.author}</span><span>{formatDate(post.createdAt)}</span><span><i className="green-dot" /> {post.status === "published" ? "공개" : "숨김"}</span><span>{post.views.toLocaleString()} · {post.likes.toLocaleString()}</span></div>) : <p className="admin-empty">아직 데이터베이스에 등록된 게시글이 없습니다.</p>}</div></section>}
       {tab === "events" && <section className="event-admin-grid"><AdminBoardEditor mode="events" submitting={publishingKind === "events"} onPublish={(payload) => publishAdminPost(payload, "events")} /><AdminPostList title="최근 이벤트" description="관리자가 등록한 이벤트 게시글입니다." posts={eventPosts} onRefresh={() => void loadOverview()} /><AdminEventRewards /></section>}
@@ -426,42 +677,53 @@ export default function AdminConsole() {
       {tab === "shop" && <AdminShop onChanged={() => void loadOverview(true)} />}
       {tab === "points" && <AdminPointSettings />}
       {tab === "members" && <section className="admin-panel">
-        <div className="panel-title"><div><h2>회원 개인정보·레벨 관리</h2><p>{overview.operator.canManageAdmins ? "오너 계정은 회원을 Lv.10 관리자로 지정하거나 해제할 수 있습니다." : "Lv.10 관리자는 다른 관리자의 지정·해제를 제외한 회원 관리 권한을 가집니다."}</p></div><div><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="아이디·닉네임 검색" /><button onClick={saveMembers} disabled={submitting}>{submitting ? "저장 중…" : `변경 저장${dirtyMemberIds.length ? ` (${dirtyMemberIds.length})` : ""}`}</button></div></div>
-        <div className="admin-table member-table">
+        <div className="panel-title member-panel-title"><div><h2>회원 개인정보·레벨 관리</h2><p>{overview.operator.canManageAdmins ? "오너 계정은 회원을 Lv.10 관리자로 지정하거나 해제할 수 있습니다." : "Lv.10 관리자는 다른 관리자의 지정·해제를 제외한 회원 관리 권한을 가집니다."}</p></div><div className="member-toolbar"><input value={query} maxLength={MAX_ADMIN_MEMBER_SEARCH_CHARACTERS} disabled={Boolean(dirtyMemberIds.length)} onChange={(event) => changeMemberQuery(event.target.value)} placeholder="아이디·닉네임 앞부분 검색" aria-label="회원 앞부분 검색" title={dirtyMemberIds.length ? "변경 내용을 먼저 저장해 주세요." : "아이디 또는 닉네임의 시작 부분을 입력해 주세요."} /><select value={memberSort} disabled={Boolean(dirtyMemberIds.length)} onChange={(event) => { setMemberSort(event.target.value as MemberSort); setMemberPage(1); setMemberListError(""); }} aria-label="회원 정렬" title={dirtyMemberIds.length ? "변경 내용을 먼저 저장해 주세요." : undefined}>{MEMBER_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><button onClick={saveMembers} disabled={submitting}>{submitting ? "저장 중…" : `변경 저장${dirtyMemberIds.length ? ` (${dirtyMemberIds.length})` : ""}`}</button></div></div>
+        <div className="admin-list-controls">
+          <div className="member-list-meta" aria-live="polite">{memberListError ? <span className="member-list-error">{memberListError}<button type="button" onClick={() => { setMemberListError(""); setMemberListLoadedKey(""); setMemberReloadToken((token) => token + 1); }}>다시 시도</button></span> : memberListBusy ? <span>회원 목록을 확인하는 중입니다.</span> : <span>{query.trim() ? `검색 결과 ${memberTotal.toLocaleString()}명` : `전체 회원 ${memberTotal.toLocaleString()}명`} · {memberRangeStart.toLocaleString()}–{memberRangeEnd.toLocaleString()}명 표시</span>}{dirtyMemberIds.length ? <b>변경 저장 후 검색·정렬·페이지 이동이 가능합니다.</b> : <small>{MEMBER_SORT_OPTIONS.find((option) => option.value === memberSort)?.label}</small>}</div>
+          <AdminPageSizeButtons value={memberPageSize} disabled={Boolean(dirtyMemberIds.length) || memberListBusy || submitting} label="회원 목록 표시 개수" onChange={(pageSize) => { setMemberPageSize(pageSize); setMemberPage(1); setMemberListError(""); setMemberListLoadedKey(""); }} />
+        </div>
+        <div className={`admin-table member-table${memberListBusy ? " loading" : ""}`} aria-busy={memberListBusy}>
           <div className="admin-tr head"><b>아이디</b><span>닉네임</span><span>레벨</span><span>가입 IP</span><span>포인트</span><span>가입일</span><span>상태</span><span>관리</span><span>실장</span><span>제휴</span></div>
-          {filteredMembers.length ? filteredMembers.map((member) => {
+          {visibleMemberRows.length ? visibleMemberRows.map((member) => {
             const protectedAdmin = !overview.operator.canManageAdmins && member.level === 10;
             return <div className={`admin-tr ${protectedAdmin ? "protected-admin" : ""}`} key={member.id}>
               <b>{member.username}</b>
-              <span><input value={member.nickname} maxLength={12} disabled={protectedAdmin} onChange={(event) => changeMember(member.id, { nickname: event.target.value })} /></span>
-              <span className="level-control"><b>Lv.</b><input type="number" min="1" max={overview.operator.canManageAdmins ? 10 : 9} value={member.level} disabled={protectedAdmin} aria-label={`${member.nickname} 레벨`} onChange={(event) => changeMember(member.id, { level: Math.max(1, Math.min(overview.operator.canManageAdmins ? 10 : 9, Number(event.target.value))) })} />{member.levelLocked && <i title="관리자가 직접 지정한 고정 레벨입니다.">고정</i>}</span>
+              <span><input value={member.nickname} maxLength={12} disabled={protectedAdmin || submitting} onChange={(event) => changeMember(member.id, { nickname: event.target.value })} /></span>
+              <span className="level-control"><b>Lv.</b><input type="number" min="1" max={overview.operator.canManageAdmins ? 10 : 9} value={member.level} disabled={protectedAdmin || submitting} aria-label={`${member.nickname} 레벨`} onChange={(event) => changeMember(member.id, { level: Math.max(1, Math.min(overview.operator.canManageAdmins ? 10 : 9, Number(event.target.value))), levelLocked: true })} /><label className={member.levelLocked ? "level-lock-toggle checked" : "level-lock-toggle"} title={member.levelLocked ? "자동 레벨업을 중지하고 현재 레벨을 고정합니다." : "조건 충족 시 자동으로 레벨업합니다."}><input type="checkbox" checked={member.levelLocked} disabled={protectedAdmin || submitting} aria-label={`${member.nickname} 레벨 고정`} onChange={(event) => changeMember(member.id, { levelLocked: event.target.checked })} /><span>고정</span></label></span>
               <span title={member.firstLoginIp ? `최초 로그인 ${member.firstLoginIp}` : "로그인 기록 없음"}>{member.signupIp}</span>
-              <span><input type="number" min="0" max="1000000000" value={member.points} disabled={protectedAdmin} onChange={(event) => changeMember(member.id, { points: Number(event.target.value) })} /></span>
+              <span><input type="number" min="0" max="1000000000" value={member.points} disabled={protectedAdmin || submitting} onChange={(event) => changeMember(member.id, { points: Number(event.target.value) })} /></span>
               <span>{formatDate(member.createdAt)}</span>
               <span className={member.status === "suspended" ? "red-text" : "green-text"}>{member.status === "suspended" ? "정지" : "정상"}</span>
-              <span>{protectedAdmin ? <em className="owner-only">오너 전용</em> : <button className={member.status === "suspended" ? "" : "danger"} onClick={() => changeMember(member.id, { status: member.status === "suspended" ? "active" : "suspended" })}>{member.status === "suspended" ? "정지 해제" : "이용 정지"}</button>}</span>
-              <span><select className={member.isDirector ? "director-selected" : ""} value={member.isDirector ? "director" : "member"} aria-label={`${member.nickname} 실장 상태`} onChange={(event) => changeMember(member.id, event.target.value === "director" ? { isDirector: true } : { isDirector: false, isPartner: false })}><option value="member">일반</option><option value="director">실장</option></select></span>
-              <span><select className={member.isPartner ? "partner-selected" : ""} value={member.isPartner ? "partner" : "member"} disabled={!member.isDirector && !member.isPartner} aria-label={`${member.nickname} 제휴 상태`} title={!member.isDirector ? "실장 지정 후 제휴회원으로 변경할 수 있습니다." : undefined} onChange={(event) => changeMember(member.id, { isPartner: event.target.value === "partner" })}><option value="member">일반</option><option value="partner">제휴</option></select></span>
+              <span>{protectedAdmin ? <em className="owner-only">오너 전용</em> : <button className={member.status === "suspended" ? "" : "danger"} disabled={submitting} onClick={() => changeMember(member.id, { status: member.status === "suspended" ? "active" : "suspended" })}>{member.status === "suspended" ? "정지 해제" : "이용 정지"}</button>}</span>
+              <span><select className={member.isDirector ? "director-selected" : ""} value={member.isDirector ? "director" : "member"} disabled={protectedAdmin || submitting} aria-label={`${member.nickname} 실장 상태`} title={protectedAdmin ? "Lv.10 관리자는 오너만 변경할 수 있습니다." : undefined} onChange={(event) => changeMember(member.id, event.target.value === "director" ? { isDirector: true } : { isDirector: false, isPartner: false })}><option value="member">일반</option><option value="director">실장</option></select></span>
+              <span><select className={member.isPartner ? "partner-selected" : ""} value={member.isPartner ? "partner" : "member"} disabled={protectedAdmin || submitting || !member.isDirector && !member.isPartner} aria-label={`${member.nickname} 제휴 상태`} title={protectedAdmin ? "Lv.10 관리자는 오너만 변경할 수 있습니다." : !member.isDirector ? "실장 지정 후 제휴회원으로 변경할 수 있습니다." : undefined} onChange={(event) => changeMember(member.id, { isPartner: event.target.value === "partner" })}><option value="member">일반</option><option value="partner">제휴</option></select></span>
             </div>;
-          }) : <p className="admin-empty">조건에 맞는 회원이 없습니다.</p>}
+          }) : <p className="admin-empty">{memberListError ? "회원 목록을 표시할 수 없습니다." : memberListBusy ? "회원 목록을 불러오는 중입니다." : "조건에 맞는 회원이 없습니다."}</p>}
         </div>
+        <AdminPagination page={memberPage} totalPages={memberTotalPages} pages={memberPageNumbers} disabled={Boolean(dirtyMemberIds.length) || memberListBusy || submitting} onChange={setMemberPage} label="회원 목록 페이지" />
       </section>}
       {tab === "security" && <section className="admin-security"><article><div className="panel-title"><div><h2>가입 차단 IP</h2><p>관리자가 직접 등록한 IP만 가입을 차단합니다.</p></div></div><form className="ip-form" onSubmit={addBlockedIp}><input value={newIp} onChange={(event) => setNewIp(event.target.value)} placeholder="예: 203.0.113.10" aria-label="차단할 IP" required /><input value={newIpReason} onChange={(event) => setNewIpReason(event.target.value)} placeholder="차단 사유" aria-label="차단 사유" required /><button type="submit">차단 추가</button></form><div className="ip-list">{overview.blockedIps.length ? overview.blockedIps.map((item) => <div key={item.ip}><code>{item.ip}</code><span>{item.reason}</span><small>{formatDate(item.createdAt)}</small><button onClick={() => void removeBlockedIp(item.ip)}>해제</button></div>) : <p className="admin-empty">현재 차단된 IP가 없습니다.</p>}</div></article><article className="architecture-card"><p>SERVER AUTH</p><h2>관리자 인증 분리 운영</h2><div className="architecture"><div><b>www</b><span>일반 서비스</span></div><i>→</i><div><b>/admin</b><span>운영 화면</span></div><i>→</i><div><b>Auth</b><span>서버 검증</span></div></div><ul><li>관리자 비밀번호를 브라우저 코드에서 제거</li><li>서버 서명 세션과 소유자 전용 접근 적용</li><li>정식 런칭 전 별도 관리자 호스트 분리 권장</li></ul></article></section>}
       {tab === "support" && <AdminSupport kind="support" onChanged={() => void loadOverview(true)} />}
       {tab === "partner" && <AdminSupport kind="partner" onChanged={() => void loadOverview(true)} />}
       {tab === "directors" && <section className="admin-panel">
-        <div className="panel-title"><div><h2>실장 담당지역</h2><p>실장을 선택해 글을 등록할 수 있는 상세지역을 여러 곳 배정해 주세요.</p></div><strong className="designation-count">총 {directorMembers.length.toLocaleString()}명</strong></div>
-        <div className="director-region-list">
-          {directorMembers.length ? directorMembers.map((member) => {
+        <div className="panel-title"><div><h2>실장 담당지역</h2><p>실장을 선택해 글을 등록할 수 있는 상세지역을 여러 곳 배정해 주세요.</p></div><strong className="designation-count">총 {directorTotal.toLocaleString()}명</strong></div>
+        <div className="admin-list-controls director-list-controls">
+          <div className="member-list-meta" aria-live="polite">{directorListError ? <span className="member-list-error">{directorListError}<button type="button" onClick={() => { setDirectorListError(""); setDirectorListLoadedKey(""); setDirectorReloadToken((token) => token + 1); }}>다시 시도</button></span> : directorListBusy ? <span>실장 목록을 확인하는 중입니다.</span> : <span>전체 실장 {directorTotal.toLocaleString()}명 · {directorRangeStart.toLocaleString()}–{directorRangeEnd.toLocaleString()}명 표시</span>}{dirtyDirectorIds.length ? <b>변경 저장 후 표시 개수·페이지 이동이 가능합니다.</b> : <small>최근 가입 순</small>}</div>
+          <AdminPageSizeButtons value={directorPageSize} disabled={directorNavigationLocked} label="실장 목록 표시 개수" onChange={(pageSize) => { setDirectorPageSize(pageSize); setDirectorPage(1); setDirectorListError(""); setDirectorListLoadedKey(""); setExpandedDirectorId(null); }} />
+        </div>
+        <div className={`director-region-list${directorListBusy ? " loading" : ""}`} aria-busy={directorListBusy}>
+          {visibleDirectorMembers.length ? visibleDirectorMembers.map((member) => {
             const isExpanded = expandedDirectorId === member.id;
             const assigned = directorRegions[member.id] ?? [];
+            const assignmentsLoaded = Object.hasOwn(directorRegions, member.id);
+            const assignmentCount = assignmentsLoaded ? assigned.length : member.assignmentCount;
             const isDirty = dirtyDirectorIds.includes(member.id);
             return <article className={`director-region-card${isExpanded ? " expanded" : ""}`} key={member.id}>
-              <button className="director-region-summary" type="button" aria-expanded={isExpanded} aria-controls={`director-regions-${member.id}`} onClick={() => setExpandedDirectorId(isExpanded ? null : member.id)}>
+              <button className="director-region-summary" type="button" aria-expanded={isExpanded} aria-controls={`director-regions-${member.id}`} onClick={() => void toggleDirectorEditor(member)}>
                 <b>{member.username}</b>
                 <span>{member.nickname}</span>
                 <span>Lv.{member.level}</span>
-                <span>{assigned.length.toLocaleString()}곳 배정</span>
+                <span>{assignmentCount.toLocaleString()}곳 배정</span>
                 <span className={member.status === "suspended" ? "red-text" : "green-text"}>{member.status === "suspended" ? "정지" : "정상"}</span>
                 <em>{isExpanded ? "접기 −" : "지역 설정 +"}</em>
               </button>
@@ -471,7 +733,7 @@ export default function AdminConsole() {
                   <button type="button" disabled={!isDirty || savingDirectorId !== null || member.status !== "active"} onClick={() => void saveDirectorRegions(member.id)}>{savingDirectorId === member.id ? "저장 중…" : isDirty ? `변경 저장 (${assigned.length})` : `저장됨 (${assigned.length})`}</button>
                 </div>
                 {member.status !== "active" && <p className="director-region-warning">정지된 실장은 지역을 변경할 수 없습니다. 회원 관리에서 정상 상태로 변경한 뒤 저장해 주세요.</p>}
-                {directorRegionsLoading ? <p className="admin-empty">담당지역을 불러오는 중입니다.</p> : <div className="director-region-groups">
+                {directorAssignmentsLoadingId === member.id ? <p className="admin-empty">담당지역을 불러오는 중입니다.</p> : <div className="director-region-groups">
                   {vendorRegionGroups.filter((group) => group.label !== "전체").map((group) => {
                     const allSelected = group.districts.every((district) => assigned.some((item) => item.region === group.label && item.district === district));
                     const selectedCount = group.districts.filter((district) => assigned.some((item) => item.region === group.label && item.district === district)).length;
@@ -489,8 +751,9 @@ export default function AdminConsole() {
                 </div>}
               </div>}
             </article>;
-          }) : <p className="admin-empty">아직 실장으로 지정된 회원이 없습니다.</p>}
+          }) : <p className="admin-empty">{directorListError ? "실장 목록을 표시할 수 없습니다." : directorListBusy ? "실장 목록을 불러오는 중입니다." : "아직 실장으로 지정된 회원이 없습니다."}</p>}
         </div>
+        <AdminPagination page={directorPage} totalPages={directorTotalPages} pages={directorPageNumbers} disabled={directorNavigationLocked} onChange={(page) => { setDirectorPage(page); setExpandedDirectorId(null); }} label="실장 목록 페이지" />
       </section>}
       {tab === "affiliates" && <section className="admin-panel">
         <div className="panel-title"><div><h2>제휴회원 추천업체 권한</h2><p>활성 상태의 실장·제휴회원에게 수정할 추천업체 슬롯을 여러 개 배정할 수 있습니다.</p></div><strong className="designation-count">총 {affiliateMembers.length.toLocaleString()}명</strong></div>
@@ -542,28 +805,17 @@ function AdminBoardEditor({ mode, submitting, onPublish }: { mode: "events" | "n
     const saved = await onPublish({ category, title: String(data.get("title") ?? ""), titleColor, authorName: String(data.get("authorName") ?? ""), body });
     if (saved) { form.reset(); setTitle(""); setTitleColor(""); setBody(""); }
   };
-  return <form className="admin-panel admin-board-editor" onSubmit={submit}>
+  const resetEditor = () => { setTitle(""); setTitleColor(""); setBody(""); };
+  return <form className="admin-panel admin-board-editor" onSubmit={submit} onReset={resetEditor}>
     <div className="panel-title"><div><h2>{mode === "events" ? "새 이벤트 작성" : "새 공지 작성"}</h2><p>{mode === "events" ? "등록 즉시 이벤트 게시판에 공개됩니다." : "선택한 게시판 상단에 공지로 고정됩니다."}</p></div></div>
     <div className="admin-editor-fields">
       <div className="admin-editor-field"><span>{mode === "events" ? "이벤트 제목" : "공지 제목"}</span><RichTitleInput name="title" value={title} onChange={setTitle} placeholder="제목을 입력해 주세요." ariaLabel={mode === "events" ? "이벤트 제목" : "공지 제목"} /></div>
       <label>작성자<input name="authorName" required minLength={1} maxLength={20} defaultValue="운영팀" placeholder="예: 운영팀" /></label>
       <RichTextEditor name="body" value={body} onChange={setBody} onBusyChange={setEditorBusy} compact placeholder={mode === "events" ? "혜택, 기간, 참여 방법 등 자세한 내용을 입력하세요." : "공지 내용을 입력하세요."} />
       <div className="admin-editor-note"><span>개인정보 노출과 불법 정보가 포함되지 않았는지 확인해 주세요.</span><b>저장 전 자동 정리됩니다.</b></div>
-      <div className="admin-editor-actions"><button type="reset" disabled={editorBusy} onClick={() => setBody("")}>초기화</button><button type="submit" disabled={submitting || editorBusy}>{editorBusy ? "첨부 중…" : submitting ? "게시 중…" : mode === "events" ? "이벤트 게시" : "공지 게시"}</button></div>
+      <div className="admin-editor-actions"><button type="reset" disabled={editorBusy}>초기화</button><button type="submit" disabled={submitting || editorBusy}>{editorBusy ? "첨부 중…" : submitting ? "게시 중…" : mode === "events" ? "이벤트 게시" : "공지 게시"}</button></div>
     </div>
   </form>;
-}
-
-function AdminTitleColorPicker({ value, onChange }: { value: TitleColor; onChange: (color: TitleColor) => void }) {
-  return <fieldset className="admin-title-color-picker">
-    <legend>제목 색상</legend>
-    <div>
-      {TITLE_COLOR_OPTIONS.map((option) => <label className={value === option.value ? "selected" : ""} key={option.label}>
-        <input type="radio" name="titleColor" value={option.value} checked={value === option.value} onChange={() => onChange(option.value)} />
-        <span><i style={{ background: option.value || "#111111" }} />{option.label}</span>
-      </label>)}
-    </div>
-  </fieldset>;
 }
 
 function AdminPostList({ title, description, posts, onRefresh }: { title: string; description: string; posts: Post[]; onRefresh: () => void }) {

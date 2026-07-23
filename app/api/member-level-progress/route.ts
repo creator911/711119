@@ -3,7 +3,7 @@ import { memberFromSession } from "../../lib/member-auth";
 import { memberLevelProgressPercent, type LevelProgressCounts } from "../../lib/member-level";
 import {
   loadMemberLevelProgressRow,
-  refreshAutomaticMemberLevel,
+  refreshAutomaticMemberLevelFromProgressRow,
 } from "../../lib/member-level-progress";
 import { attendancePointsForSettings, loadPointSettings } from "../../lib/point-settings";
 
@@ -13,12 +13,14 @@ export async function GET(request: Request) {
   const member = await memberFromSession(request);
   if (!member) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
 
-  await refreshAutomaticMemberLevel(env.DB, member.id);
-  const [row, settings] = await Promise.all([
+  // The full activity aggregate is needed for the guide, so read it exactly
+  // once and reuse it for both promotion and progress rendering.
+  const [loadedRow, settings] = await Promise.all([
     loadMemberLevelProgressRow(env.DB, member.id),
     loadPointSettings(env.DB),
   ]);
-  if (!row) return Response.json({ error: "회원 정보를 확인할 수 없습니다." }, { status: 404 });
+  if (!loadedRow) return Response.json({ error: "회원 정보를 확인할 수 없습니다." }, { status: 404 });
+  const row = await refreshAutomaticMemberLevelFromProgressRow(env.DB, loadedRow, settings);
 
   const current: LevelProgressCounts = {
     attendance: Number(row.attendanceCount) || 0,

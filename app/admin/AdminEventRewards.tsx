@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type PeriodType = "weekly" | "monthly";
 type BoardType = "posts" | "comments";
@@ -30,25 +30,42 @@ export default function AdminEventRewards() {
   const [data, setData] = useState<RewardAudit | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const requestSequence = useRef(0);
+  const activeRequest = useRef<AbortController | null>(null);
 
   const load = useCallback(async (selected: PeriodType) => {
+    const requestId = ++requestSequence.current;
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/admin/event-rewards?period=${selected}`, { cache: "no-store" });
+      const response = await fetch(`/api/admin/event-rewards?period=${selected}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       const result = await response.json() as RewardAudit & { error?: string };
       if (!response.ok) throw new Error(result.error ?? "이벤트 보상 내역을 불러오지 못했습니다.");
+      if (requestId !== requestSequence.current || result.periodType !== selected) return;
       setData(result);
     } catch (loadError) {
+      if (controller.signal.aborted || requestId !== requestSequence.current) return;
       setError(loadError instanceof Error ? loadError.message : "이벤트 보상 내역을 불러오지 못했습니다.");
     } finally {
-      setLoading(false);
+      if (requestId === requestSequence.current) {
+        activeRequest.current = null;
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(period), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      activeRequest.current?.abort();
+    };
   }, [load, period]);
 
   const changePeriod = (next: PeriodType) => {

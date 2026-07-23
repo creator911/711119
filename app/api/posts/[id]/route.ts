@@ -15,6 +15,7 @@ import {
 import { mediaActorKey } from "../../../lib/media-actor";
 import { communityTagsFromMask, isCommunityBoardCategory, validateCommunityTags } from "../../../lib/community-tags";
 import { normalizeTitleColor } from "../../../lib/title-colors";
+import { pendingDistributedPostViews, pendingPostViews, recordPostView } from "../../../lib/post-view-counter";
 
 const parsePostId = (request: Request) => {
   const segments = new URL(request.url).pathname.split("/").filter(Boolean);
@@ -42,8 +43,10 @@ async function publicPost(id: number, viewer: MemberSession | null, adminActor =
     SELECT p.id,p.category,p.title,p.title_color AS titleColor,p.body,p.author_id AS authorId,p.views,p.likes,p.dislikes,p.report_count AS reportCount,p.is_notice AS isNotice,p.is_pinned AS isPinned,p.community_tag_mask AS communityTagMask,p.created_at AS createdAt,
            COALESCE(NULLIF(p.author_name,''),u.nickname,'운영자') AS author,
            COALESCE(u.level,0) AS authorLevel,
-           (SELECT COUNT(*) FROM post_comments c WHERE c.post_id=p.id AND c.status='published') AS commentCount
-    FROM posts p LEFT JOIN users u ON u.id=p.author_id
+           COALESCE(ps.comment_count,0) AS commentCount
+    FROM posts p
+    LEFT JOIN users u ON u.id=p.author_id
+    LEFT JOIN post_stats ps ON ps.post_id=p.id
     WHERE p.id=? AND p.status='published'
   `).bind(id).first<Record<string, unknown> & { authorId: number }>();
   if (!post) return null;
@@ -62,7 +65,8 @@ export async function GET(request: Request) {
     const exists = await env.DB.prepare("SELECT id FROM posts WHERE id=? AND status='published'").bind(id).first();
     if (!exists) return Response.json({ error: "게시글을 찾을 수 없습니다." }, { status: 404 });
 
-    await env.DB.prepare("UPDATE posts SET views=views+1 WHERE id=?").bind(id).run();
+    const cache = (env as unknown as { CACHE?: Parameters<typeof recordPostView>[2] }).CACHE;
+    await recordPostView(env.DB, id, cache);
     const [viewer, operator] = await Promise.all([memberFromSession(request), adminSession(request, env)]);
     const adminActor = isStandaloneAdminActor(viewer, operator);
     const [post, comments, poll] = await Promise.all([
@@ -72,10 +76,21 @@ export async function GET(request: Request) {
         FROM post_comments c LEFT JOIN users u ON u.id=c.user_id
         WHERE c.post_id=? AND c.status='published'
         ORDER BY c.id ASC
+        LIMIT 50
       `).bind(id).all(),
       loadPostPoll(env.DB, id, viewer?.id),
     ]);
-    return Response.json({ post, comments: comments.results, poll });
+    const visiblePost = post
+      ? {
+        ...post,
+        views: Number((post as { views?: unknown }).views ?? 0)
+          + (cache ? await pendingDistributedPostViews(cache, id) : pendingPostViews(env.DB, id)),
+      }
+      : post;
+    const nextCommentCursor = comments.results.length === 50
+      ? Number((comments.results.at(-1) as { id?: unknown })?.id ?? 0) || null
+      : null;
+    return Response.json({ post: visiblePost, comments: comments.results, nextCommentCursor, poll });
   } catch (error) {
     console.error("Post detail load failed", error);
     return Response.json({ error: "게시글을 불러오지 못했습니다." }, { status: 500 });
@@ -189,8 +204,8 @@ export async function DELETE(request: Request) {
     if (!canManagePost(viewer, post, adminActor)) return Response.json({ error: "게시글을 삭제할 권한이 없습니다." }, { status: 403 });
 
     const deleteStatement = env.DB.prepare(
-      "UPDATE posts SET status='deleted' WHERE id=? AND status='published' AND (?=1 OR author_id=? OR ?=10)",
-    ).bind(id, adminActor ? 1 : 0, viewer?.id ?? -1, viewer?.level ?? 0);
+      "UPDATE posts SET status='deleted',deleted_at=? WHERE id=? AND status='published' AND (?=1 OR author_id=? OR ?=10)",
+    ).bind(new Date().toISOString(), id, adminActor ? 1 : 0, viewer?.id ?? -1, viewer?.level ?? 0);
     const cleanupStatements = await bodyMediaReleaseStatements(env.DB, "post", id);
     const results = await env.DB.batch([deleteStatement, ...cleanupStatements]);
     const deleted = results[0];

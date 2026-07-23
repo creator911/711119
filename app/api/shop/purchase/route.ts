@@ -1,6 +1,10 @@
 import { env } from "cloudflare:workers";
 import { memberFromSession } from "../../../lib/member-auth";
 import { deliverPendingShopPurchases, publicShopProduct, shopErrorResponse, shopProduct } from "../../../lib/shop";
+import {
+  consumeDistributedRateLimit,
+  distributedRateLimitResponse,
+} from "../../../lib/distributed-rate-limit";
 
 type PurchaseRow = {
   id: number;
@@ -35,6 +39,8 @@ async function responseFor(userId: number, purchase: PurchaseRow) {
 export async function POST(request: Request) {
   const user = await memberFromSession(request);
   if (!user) return Response.json({ error: "로그인 후 상품을 구매할 수 있습니다." }, { status: 401 });
+  const distributedLimit = await consumeDistributedRateLimit(env.CACHE, "shop-purchase", String(user.id), 30, 60);
+  if (distributedLimit && !distributedLimit.allowed) return distributedRateLimitResponse(distributedLimit);
 
   let productId = 0;
   let requestKey = "";

@@ -1,13 +1,16 @@
 import { env } from "cloudflare:workers";
+import { AttendanceCommitConflict, commitAttendanceBatch } from "../../lib/attendance-commit";
 import { ATTENDANCE_STREAK_REWARDS } from "../../lib/attendance-rewards";
 import { MAX_AUTOMATIC_MEMBER_LEVEL } from "../../lib/member-level";
 import { attendancePointsForSettings, automaticMemberLevelForSettings, loadPointSettings } from "../../lib/point-settings";
+import { isUniqueConstraintError } from "../../lib/database-errors";
 
 const tokenOf = (request: Request) => request.headers.get("cookie")?.match(/(?:^|; )cn_session=([^;]+)/)?.[1];
 const dateInKorea = (date = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 
 type SessionUser = { id: number; nickname: string; points: number; level: number };
 type EarnedRewardRow = { days: number };
+type StreakLedgerRow = { reference: string | null };
 type LevelProgressRow = { level: number; levelLocked: number | boolean; postCount: number; commentCount: number; attendanceCount: number };
 
 async function userFromSession(request: Request) {
@@ -50,6 +53,12 @@ export async function GET(request: Request) {
   const today = dateInKorea();
   const requestedMonth = url.searchParams.get("month") ?? today.slice(0, 7);
   const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth) ? requestedMonth : today.slice(0, 7);
+  const afterCreatedAt = url.searchParams.get("afterCreatedAt") ?? "";
+  const afterIdValue = Number(url.searchParams.get("afterId") ?? "0");
+  const hasEntryCursor = Boolean(afterCreatedAt) && Number.isSafeInteger(afterIdValue) && afterIdValue > 0;
+  if ((afterCreatedAt || afterIdValue) && !hasEntryCursor) {
+    return Response.json({ error: "출석 목록 위치를 확인해 주세요." }, { status: 400 });
+  }
   const user = await userFromSession(request);
   const pointSettings = await loadPointSettings(env.DB);
 
@@ -62,23 +71,40 @@ export async function GET(request: Request) {
       `).bind(user.id, month).all<{ date: string; points: number }>()
     : Promise.resolve({ results: [] as Array<{ date: string; points: number }> });
 
-  const [calendarResult, entriesResult, rankingResult] = await Promise.all([
+  const entriesStatement = hasEntryCursor
+    ? env.DB.prepare(`
+        SELECT a.id, a.created_at AS createdAt, a.greeting, a.points_awarded AS points,
+               u.nickname,
+               COALESCE(s.attendance_count,0) AS totalDays
+        FROM attendance a
+        JOIN users u ON u.id = a.user_id
+        LEFT JOIN member_activity_stats s ON s.user_id=a.user_id
+        WHERE a.attendance_date = ?
+          AND (a.created_at > ? OR (a.created_at = ? AND a.id > ?))
+        ORDER BY a.created_at ASC,a.id ASC LIMIT 101
+      `).bind(today, afterCreatedAt, afterCreatedAt, afterIdValue)
+    : env.DB.prepare(`
+        SELECT a.id, a.created_at AS createdAt, a.greeting, a.points_awarded AS points,
+               u.nickname,
+               COALESCE(s.attendance_count,0) AS totalDays
+        FROM attendance a
+        JOIN users u ON u.id = a.user_id
+        LEFT JOIN member_activity_stats s ON s.user_id=a.user_id
+        WHERE a.attendance_date = ?
+        ORDER BY a.created_at ASC,a.id ASC LIMIT 101
+      `).bind(today);
+
+  const [calendarResult, entriesResult, entriesCountRow] = await Promise.all([
     calendarRequest,
-    env.DB.prepare(`
-      SELECT a.id, a.created_at AS createdAt, a.greeting, a.points_awarded AS points,
-             u.nickname,
-             (SELECT COUNT(*) FROM attendance own WHERE own.user_id = a.user_id) AS totalDays
-      FROM attendance a JOIN users u ON u.id = a.user_id
-      WHERE a.attendance_date = ?
-      ORDER BY a.created_at ASC LIMIT 100
-    `).bind(today).all<{ id: number; createdAt: string; greeting: string; points: number; nickname: string; totalDays: number }>(),
-    env.DB.prepare(`
-      SELECT u.nickname, COUNT(*) AS totalDays, MAX(a.attendance_date) AS latestAttendance
-      FROM attendance a JOIN users u ON u.id = a.user_id
-      GROUP BY a.user_id, u.nickname
-      ORDER BY totalDays DESC, latestAttendance DESC LIMIT 20
-    `).all<{ nickname: string; totalDays: number; latestAttendance: string }>(),
+    entriesStatement.all<{ id: number; createdAt: string; greeting: string; points: number; nickname: string; totalDays: number }>(),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM attendance WHERE attendance_date=?").bind(today).first<{ count: number }>(),
   ]);
+  const entryRows = entriesResult.results ?? [];
+  const visibleEntries = entryRows.slice(0, 100);
+  const lastVisibleEntry = visibleEntries.at(-1);
+  const nextEntriesCursor = entryRows.length > 100 && lastVisibleEntry
+    ? { createdAt: lastVisibleEntry.createdAt, id: lastVisibleEntry.id }
+    : null;
 
   let userSummary = null;
   let streakRewards = ATTENDANCE_STREAK_REWARDS.map((reward) => ({ ...reward, earned: false }));
@@ -104,8 +130,10 @@ export async function GET(request: Request) {
     today,
     month,
     calendar: calendarResult.results,
-    entries: entriesResult.results,
-    ranking: rankingResult.results,
+    entries: visibleEntries,
+    entriesTotal: Number(entriesCountRow?.count ?? 0),
+    nextEntriesCursor,
+    ranking: [],
     streakRewards,
     user: userSummary,
   });
@@ -125,51 +153,137 @@ export async function POST(request: Request) {
     const createdAt = new Date().toISOString();
     const progress = await env.DB.prepare(`
       SELECT u.level,u.level_locked AS levelLocked,
-             (SELECT COUNT(*) FROM posts p WHERE p.author_id=u.id AND p.status='published') AS postCount,
-             (SELECT COUNT(*) FROM post_comments c WHERE c.user_id=u.id AND c.status='published') AS commentCount,
-             (SELECT COUNT(*) FROM attendance a WHERE a.user_id=u.id) AS attendanceCount
+             CASE WHEN u.level_locked=0 AND u.level<?
+               THEN COALESCE(s.post_count,0) ELSE 0 END AS postCount,
+             CASE WHEN u.level_locked=0 AND u.level<?
+               THEN COALESCE(s.comment_count,0) ELSE 0 END AS commentCount,
+             CASE WHEN u.level_locked=0 AND u.level<?
+               THEN COALESCE(s.attendance_count,0) ELSE 0 END AS attendanceCount
       FROM users u
+      LEFT JOIN member_activity_stats s ON s.user_id=u.id
       WHERE u.id=? AND u.status='active'
-    `).bind(user.id).first<LevelProgressRow>();
+    `).bind(MAX_AUTOMATIC_MEMBER_LEVEL, MAX_AUTOMATIC_MEMBER_LEVEL, MAX_AUTOMATIC_MEMBER_LEVEL, user.id).first<LevelProgressRow>();
     if (!progress) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
     const pointSettings = await loadPointSettings(env.DB);
     const calculatedLevel = Math.min(MAX_AUTOMATIC_MEMBER_LEVEL, automaticMemberLevelForSettings(progress.postCount, progress.commentCount, progress.attendanceCount + 1, pointSettings));
-    const nextLevel = Boolean(progress.levelLocked) || progress.level >= 10 ? progress.level : Math.max(1, progress.level, calculatedLevel);
+    const nextLevel = Boolean(progress.levelLocked) || progress.level >= MAX_AUTOMATIC_MEMBER_LEVEL ? progress.level : Math.max(1, progress.level, calculatedLevel);
     const attendancePoints = attendancePointsForSettings(nextLevel, pointSettings);
+    const [attendanceDates, streakLedger] = await Promise.all([
+      env.DB.prepare("SELECT attendance_date AS date FROM attendance WHERE user_id = ? ORDER BY attendance_date")
+        .bind(user.id).all<{ date: string }>(),
+      env.DB.prepare("SELECT reference FROM point_ledger WHERE user_id=? AND type='attendance_streak_reward'")
+        .bind(user.id).all<StreakLedgerRow>(),
+    ]);
+    const stats = streakStats([...attendanceDates.results.map((item) => item.date), date], date);
+    const paidMilestones = new Set((streakLedger.results ?? []).flatMap(({ reference }) => {
+      const matched = reference?.match(/^streak:(\d+)(?::|$)/);
+      return matched ? [Number(matched[1])] : [];
+    }));
+    const eligibleRewards = ATTENDANCE_STREAK_REWARDS.filter((reward) => stats.currentStreak >= reward.days);
+    const awardedRewards = eligibleRewards
+      .filter((reward) => !paidMilestones.has(reward.days))
+      .map(({ days, points }) => ({ days, points }));
+    const rewardBonusPoints = awardedRewards.reduce((sum, reward) => sum + reward.points, 0);
+
+    // The member's level can be changed/locked by an administrator after the
+    // progress read above. Make the attendance row conditional on that exact
+    // state and make every dependent write conditional on this exact row. A
+    // concurrent admin change therefore produces a clean retry instead of a
+    // stale level reward or a partial points/ledger write.
+    const attendanceCommitGuard = `EXISTS(
+      SELECT 1 FROM attendance a
+      WHERE a.user_id=? AND a.attendance_date=? AND a.created_at=? AND a.points_awarded=?
+    )`;
     const attendanceStatements = [
-      env.DB.prepare("INSERT INTO attendance (user_id,attendance_date,points_awarded,greeting,created_at) VALUES (?,?,?,?,?)").bind(user.id, date, attendancePoints, message, createdAt),
-      env.DB.prepare("UPDATE users SET points = points + ? WHERE id = ?").bind(attendancePoints, user.id),
-      env.DB.prepare("INSERT INTO point_ledger (user_id,amount,type,status,reference,created_at) VALUES (?,?,'attendance','complete',?,?)").bind(user.id, attendancePoints, message, createdAt),
+      env.DB.prepare(`
+        INSERT INTO attendance (user_id,attendance_date,points_awarded,greeting,created_at)
+        SELECT ?,?,?,?,? FROM users u
+        WHERE u.id=? AND u.status='active' AND u.level=? AND u.level_locked=?
+      `).bind(
+        user.id, date, attendancePoints, message, createdAt,
+        user.id, progress.level, Number(Boolean(progress.levelLocked)),
+      ),
+      env.DB.prepare(`
+        UPDATE users SET points=points+?
+        WHERE id=? AND status='active' AND ${attendanceCommitGuard}
+      `).bind(attendancePoints, user.id, user.id, date, createdAt, attendancePoints),
+      env.DB.prepare(`
+        INSERT INTO point_ledger(user_id,amount,type,status,reference,created_at)
+        SELECT ?,?,'attendance','complete',?,?
+        WHERE ${attendanceCommitGuard}
+      `).bind(user.id, attendancePoints, message, createdAt, user.id, date, createdAt, attendancePoints),
     ];
     if (nextLevel !== progress.level) {
-      attendanceStatements.push(env.DB.prepare("UPDATE users SET level=? WHERE id=? AND level_locked=0 AND level<10").bind(nextLevel, user.id));
+      attendanceStatements.push(env.DB.prepare(`
+        UPDATE users SET level=?
+        WHERE id=? AND level=? AND level_locked=0 AND level<?
+          AND ${attendanceCommitGuard}
+      `).bind(
+        nextLevel, user.id, progress.level, MAX_AUTOMATIC_MEMBER_LEVEL,
+        user.id, date, createdAt, attendancePoints,
+      ));
     }
-    await env.DB.batch(attendanceStatements);
-    const dates = await env.DB.prepare("SELECT attendance_date AS date FROM attendance WHERE user_id = ? ORDER BY attendance_date").bind(user.id).all<{ date: string }>();
-    const stats = streakStats(dates.results.map((item) => item.date), date);
-    let rewardBonusPoints = 0;
-    const awardedRewards: Array<{ days: number; points: number }> = [];
-
-    for (const reward of ATTENDANCE_STREAK_REWARDS) {
-      if (stats.currentStreak < reward.days) continue;
-      const inserted = await env.DB.prepare(`
+    // Only milestones without either the current or legacy ledger reference
+    // need repair/payment writes. Long-streak members therefore do not issue
+    // three no-op statements for every already-paid milestone on each check-in.
+    for (const reward of awardedRewards) {
+      const reference = `streak:${reward.days}`;
+      const legacyReferencePattern = `streak:${reward.days}:%`;
+      attendanceStatements.push(env.DB.prepare(`
         INSERT OR IGNORE INTO attendance_streak_rewards(user_id,milestone_days,points,created_at)
-        VALUES(?,?,?,?)
-      `).bind(user.id, reward.days, reward.points, createdAt).run();
-      if ((inserted.meta as { changes?: number }).changes === 0) continue;
-      rewardBonusPoints += reward.points;
-      awardedRewards.push({ days: reward.days, points: reward.points });
-      await env.DB.batch([
-        env.DB.prepare("UPDATE users SET points = points + ? WHERE id = ?").bind(reward.points, user.id),
-        env.DB.prepare("INSERT INTO point_ledger (user_id,amount,type,status,reference,created_at) VALUES (?,?,'attendance_streak_reward','complete',?,?)").bind(user.id, reward.points, `streak:${reward.days}:${date}`, createdAt),
-      ]);
+        SELECT ?,?,?,? WHERE ${attendanceCommitGuard}
+      `).bind(
+        user.id, reward.days, reward.points, createdAt,
+        user.id, date, createdAt, attendancePoints,
+      ));
+      attendanceStatements.push(env.DB.prepare(`
+        UPDATE users
+        SET points=points+(
+          SELECT points FROM attendance_streak_rewards
+          WHERE user_id=? AND milestone_days=?
+        )
+        WHERE id=? AND ${attendanceCommitGuard} AND NOT EXISTS(
+          SELECT 1 FROM point_ledger
+          WHERE user_id=? AND type='attendance_streak_reward'
+            AND (reference=? OR reference LIKE ?)
+        )
+      `).bind(
+        user.id, reward.days, user.id,
+        user.id, date, createdAt, attendancePoints,
+        user.id, reference, legacyReferencePattern,
+      ));
+      attendanceStatements.push(env.DB.prepare(`
+        INSERT INTO point_ledger(user_id,amount,type,status,reference,created_at)
+        SELECT user_id,points,'attendance_streak_reward','complete',?,?
+        FROM attendance_streak_rewards
+        WHERE user_id=? AND milestone_days=? AND ${attendanceCommitGuard} AND NOT EXISTS(
+          SELECT 1 FROM point_ledger
+          WHERE user_id=? AND type='attendance_streak_reward'
+            AND (reference=? OR reference LIKE ?)
+        )
+      `).bind(
+        reference, createdAt, user.id, reward.days,
+        user.id, date, createdAt, attendancePoints,
+        user.id, reference, legacyReferencePattern,
+      ));
     }
+    // 출석·기본 포인트·레벨·개근 마커·개근 포인트·원장을 한 트랜잭션으로
+    // 처리해 중간 장애가 나도 일부만 반영되거나 영구 미지급되지 않게 합니다.
+    await commitAttendanceBatch(env.DB, attendanceStatements, {
+      userId: user.id,
+      date,
+      createdAt,
+      points: attendancePoints,
+    });
 
     const updatedUser = await env.DB.prepare("SELECT points,level FROM users WHERE id = ?").bind(user.id).first<{ points: number; level: number }>();
     return Response.json({ ok: true, points: updatedUser?.points ?? attendancePoints, level: updatedUser?.level ?? nextLevel, attendancePoints, rewardBonusPoints, awardedRewards, ...stats });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (message.includes("UNIQUE")) return Response.json({ error: "오늘 출석은 이미 완료했습니다." }, { status: 409 });
+    if (error instanceof AttendanceCommitConflict || message.includes("attendance_member_state_changed")) {
+      return Response.json({ error: "회원 정보가 변경되었습니다. 다시 시도해 주세요." }, { status: 409 });
+    }
+    if (isUniqueConstraintError(error)) return Response.json({ error: "오늘 출석은 이미 완료했습니다." }, { status: 409 });
     console.error("Attendance failed", error);
     return Response.json({ error: "출석 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." }, { status: 500 });
   }

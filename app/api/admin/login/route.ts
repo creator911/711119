@@ -4,9 +4,15 @@ import {
   activeLoginFailure,
   IP_BLOCK_MS,
   IP_FAILURE_LIMIT,
+  pruneLoginFailures,
   recordLoginFailure,
   recordPasswordFailure,
+  shouldRunLoginFailureMaintenance,
 } from "../../../lib/admin-login-failures";
+import {
+  consumeDistributedRateLimit,
+  distributedRateLimitResponse,
+} from "../../../lib/distributed-rate-limit";
 
 const encoder = new TextEncoder();
 const DUMMY_SALT = new Uint8Array(16);
@@ -21,6 +27,11 @@ type AdminIdentity = {
 
 const hex = (value: Uint8Array) => Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("");
 const bytes = (value: string) => new Uint8Array(value.match(/.{1,2}/g)?.map((item) => parseInt(item, 16)) ?? []);
+const cryptoBuffer = (value: Uint8Array) => {
+  const copy = new Uint8Array(value.byteLength);
+  copy.set(value);
+  return copy.buffer;
+};
 const safeEqual = (left: string, right: string) => {
   if (left.length !== right.length) return false;
   let difference = 0;
@@ -30,7 +41,7 @@ const safeEqual = (left: string, right: string) => {
 
 async function hashPassword(password: string, salt: Uint8Array) {
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: 100_000 }, key, 256);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: cryptoBuffer(salt), iterations: 100_000 }, key, 256);
   return hex(new Uint8Array(bits));
 }
 
@@ -70,12 +81,17 @@ export async function POST(request: Request) {
     if (!configuration) return Response.json({ error: "로그인 설정을 확인해 주세요." }, { status: 503 });
 
     const ip = requestIp(request);
+    const distributedLimit = await consumeDistributedRateLimit(env.CACHE, "admin-login", ip, 30, 60);
+    if (distributedLimit && !distributedLimit.allowed) return distributedRateLimitResponse(distributedLimit);
     const ipFailure = await activeLoginFailure(env.DB, "admin_ip_login_failures", "ip", ip);
     if (ipFailure?.blocked_until) return lockedResponse("잠시 후 다시 시도해 주세요.", ipFailure.blocked_until);
 
     const input = await request.json() as Record<string, string>;
     const username = String(input.username ?? "").trim().slice(0, 64);
     const password = String(input.password ?? "");
+    if (shouldRunLoginFailureMaintenance(`${ip}:${username}`)) {
+      await pruneLoginFailures(env.DB, "admin").catch(() => undefined);
+    }
     const identity = username ? await findAdmin(username) : null;
 
     if (identity) {
@@ -108,6 +124,7 @@ export async function POST(request: Request) {
       env.DB.prepare("DELETE FROM admin_ip_login_failures WHERE ip=?").bind(ip),
       env.DB.prepare("DELETE FROM admin_account_login_failures WHERE username=?").bind(accountKey),
     ]);
+    await pruneLoginFailures(env.DB, "admin").catch(() => undefined);
     const token = await createAdminToken(identity.username, identity.role, configuration.secret);
     return Response.json({
       ok: true,

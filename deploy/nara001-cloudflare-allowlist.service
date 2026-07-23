@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh nara001 Cloudflare origin allowlist
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nara001-refresh-cloudflare-allowlist

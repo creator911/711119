@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, MouseEvent, useEffect, useRef, useState } from "react";
+import { uploadMediaFile } from "../lib/client-media-upload";
 
 type RichTextEditorProps = {
   name: string;
@@ -229,12 +230,7 @@ export default function RichTextEditor({ name, value, onChange, placeholder = "�
   };
 
   const uploadFile = async (file: File, signal: AbortSignal) => {
-    const form = new FormData();
-    form.append("file", file, file.name);
-    const response = await fetch("/api/uploads", { method: "POST", body: form, signal });
-    const result = await response.json() as UploadResult & { error?: string };
-    if (!response.ok || !result.url) throw new Error(result.error ?? "파일을 첨부하지 못했습니다.");
-    return result;
+    return uploadMediaFile(file, { signal }) as Promise<UploadResult>;
   };
 
   const addImages = async (event: ChangeEvent<HTMLInputElement>) => {

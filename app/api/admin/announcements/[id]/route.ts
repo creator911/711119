@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { adminSession } from "../../../../lib/admin-auth";
+import { invalidateActiveAnnouncementSnapshot } from "../../../../lib/system-announcement-active-cache";
 
 const parseId = (value: string) => {
   const id = Number(value);
@@ -18,6 +19,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const result = await env.DB.prepare("UPDATE system_announcements SET status='cancelled',updated_at=? WHERE id=? AND status='active'")
       .bind(changedAt, id).run();
     if (!result.meta.changes) return Response.json({ error: "취소할 수 있는 알림을 찾지 못했습니다." }, { status: 404 });
+    invalidateActiveAnnouncementSnapshot();
     return Response.json({ ok: true });
   } catch (error) {
     console.error("Cancel system announcement failed", error);

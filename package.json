@@ -7,22 +7,39 @@
   },
   "scripts": {
     "dev": "vinext dev --hostname 127.0.0.1",
-    "build": "vinext build",
-    "start": "node --import ./server/register-cloudflare-loader.mjs ./node_modules/vinext/dist/cli.js start",
+    "build": "npm run build:app && npm run build:worker",
+    "build:app": "vinext build",
+    "build:worker": "node server/build-background-worker.mjs",
+    "start": "node --import ./server/register-cloudflare-loader.mjs ./server/start.mjs",
     "test": "npm run build && node --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node server/migrate.mjs",
+    "db:migrate:postgres": "node server/postgres/migrate-from-sqlite.mjs --schema-only",
+    "db:copy:postgres": "node server/postgres/migrate-from-sqlite.mjs",
+    "db:roles:postgres": "node server/postgres/provision-roles.mjs",
+    "media:copy:r2": "node server/r2/migrate-filesystem.mjs",
+    "worker": "node dist/worker/background-worker.mjs",
+    "load:test": "node tests/load/run-load-test.mjs",
+    "load:k6": "k6 run tests/load/k6-scale.js",
+    "load:seed": "node tests/load/generate-scale-fixture.mjs",
+    "load:verify": "node server/postgres/verify-invariants.mjs",
     "owners:provision": "node server/provision-owners.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.864.0",
+    "@aws-sdk/s3-request-presigner": "^3.864.0",
     "drizzle-orm": "0.45.2",
-    "next": "16.2.6",
+    "next": "16.2.11",
+    "pg": "^8.16.3",
+    "pg-copy-streams": "^7.0.0",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.6",
+    "redis": "^5.8.2"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
@@ -32,12 +49,19 @@
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
+    "pg-mem": "^3.0.5",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
     "vinext": "0.0.50",
     "vite": "8.0.13",
     "wrangler": "4.92.0"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.10",
+      "sharp": "0.35.0"
+    }
   },
   "type": "module"
 }

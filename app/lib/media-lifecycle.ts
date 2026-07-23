@@ -1,4 +1,4 @@
-export const PENDING_MEDIA_TTL_MS = 24 * 60 * 60 * 1000;
+export const PENDING_MEDIA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const PENDING_MEDIA_PRUNE_LIMIT = 12;
 
 type MediaDatabase = Pick<D1Database, "prepare" | "batch">;

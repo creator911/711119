@@ -5,17 +5,19 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("회원과 관리자 고객센터 답글은 같은 이미지 첨부기를 사용한다", async () => {
-  const [portal, admin, composer] = await Promise.all([
+  const [portal, admin, composer, uploadClient] = await Promise.all([
     read("../app/components/Portal.tsx"),
     read("../app/admin/AdminSupport.tsx"),
     read("../app/components/SupportReplyComposer.tsx"),
+    read("../app/lib/client-media-upload.ts"),
   ]);
   assert.match(portal, /<SupportReplyComposer key=\{inquiry\.id\}/);
   assert.match(admin, /<SupportReplyComposer[\s\S]*variant="admin"/);
   assert.match(composer, /const MAX_IMAGES = 4/);
   assert.match(composer, /onDragEnter=\{dragEnter\}/);
   assert.match(composer, /onDrop=\{drop\}/);
-  assert.match(composer, /X-Upload-Context/);
+  assert.match(composer, /uploadMediaFile\(optimized, \{ signal: controller\.signal, admin: variant === "admin" \}\)/);
+  assert.match(uploadClient, /"X-Upload-Context": "admin"/);
   assert.match(composer, /accept="image\/jpeg,image\/png,image\/gif,image\/webp,image\/avif,image\/bmp"/);
 });
 

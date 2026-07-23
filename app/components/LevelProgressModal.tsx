@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type ProgressCounts = { attendance: number; posts: number; comments: number };
 type ProgressTarget = ProgressCounts & { level: number };
@@ -25,32 +25,84 @@ export default function LevelProgressModal({ onClose, onLevelChange, onSessionEx
 }) {
   const [data, setData] = useState<LevelProgressData | null>(null);
   const [error, setError] = useState("");
+  const dialogRef = useRef<HTMLElement>(null);
+  const onCloseRef = useRef(onClose);
+  const onLevelChangeRef = useRef(onLevelChange);
+  const onSessionExpiredRef = useRef(onSessionExpired);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    onLevelChangeRef.current = onLevelChange;
+    onSessionExpiredRef.current = onSessionExpired;
+  }, [onClose, onLevelChange, onSessionExpired]);
 
   useEffect(() => {
     let active = true;
     fetch("/api/member-level-progress", { cache: "no-store" }).then(async (response) => {
       const result = await response.json() as LevelProgressData & { error?: string };
       if (response.status === 401) {
-        onSessionExpired();
+        onSessionExpiredRef.current();
         throw new Error(result.error ?? "로그인이 만료되었습니다.");
       }
       if (!response.ok) throw new Error(result.error ?? "레벨 정보를 불러오지 못했습니다.");
       if (!active) return;
       setData(result);
-      onLevelChange(result.level);
+      onLevelChangeRef.current(result.level);
     }).catch((reason) => {
       if (active) setError(reason instanceof Error ? reason.message : "레벨 정보를 불러오지 못했습니다.");
     });
     return () => { active = false; };
-  }, [onLevelChange, onSessionExpired]);
+  }, []);
 
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusableElements = () => Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )).filter((element) => !element.hasAttribute("hidden"));
+    const focusFrame = window.requestAnimationFrame(() => (focusableElements()[0] ?? dialog).focus());
+
+    const handleDialogKeys = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = focusableElements();
+      if (!focusable.length) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (!activeElement || !dialog.contains(activeElement) || !focusable.includes(activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+    const recoverFocus = (event: FocusEvent) => {
+      if (event.target instanceof Node && dialog.contains(event.target)) return;
+      (focusableElements()[0] ?? dialog).focus();
+    };
+    document.addEventListener("keydown", handleDialogKeys);
+    document.addEventListener("focusin", recoverFocus);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleDialogKeys);
+      document.removeEventListener("focusin", recoverFocus);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, []);
 
   const progress = data?.progressPercent ?? 0;
   const statusMessage = data && data.level >= 10
@@ -62,7 +114,7 @@ export default function LevelProgressModal({ onClose, onLevelChange, onSessionEx
         : "레벨 정보를 확인하고 있습니다.";
 
   return <div className="modal-backdrop level-progress-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="level-progress-modal" role="dialog" aria-modal="true" aria-labelledby="level-progress-title">
+    <section ref={dialogRef} className="level-progress-modal" role="dialog" aria-modal="true" aria-labelledby="level-progress-title" tabIndex={-1}>
       <button type="button" className="level-progress-close" onClick={onClose} aria-label="레벨업 안내 닫기">×</button>
       <p className="level-progress-eyebrow">LEVEL GUIDE</p>
       <h2 id="level-progress-title">레벨업 안내</h2>
@@ -85,10 +137,6 @@ export default function LevelProgressModal({ onClose, onLevelChange, onSessionEx
             <ProgressStat label="출석" current={data.current.attendance} target={data.target.attendance} remaining={data.remaining.attendance} unit="일" />
             <ProgressStat label="작성글" current={data.current.posts} target={data.target.posts} remaining={data.remaining.posts} unit="개" />
             <ProgressStat label="댓글" current={data.current.comments} target={data.target.comments} remaining={data.remaining.comments} unit="개" />
-          </div>
-          <div className="level-progress-benefit">
-            <span>LEVEL UP BENEFIT</span>
-            <p>레벨업 시 출석체크 보상이 <b>{data.attendancePoints.toLocaleString()}P → {(data.nextAttendancePoints ?? data.attendancePoints).toLocaleString()}P</b>로 증가하고, 상점 이용 가능 품목이 증가합니다.</p>
           </div>
         </> : <div className="level-progress-complete"><span>Lv.{data.level}</span><b>{statusMessage}</b><p>현재 출석체크 보상은 매일 {data.attendancePoints.toLocaleString()}P입니다.</p></div>}
       </>}

@@ -1,0 +1,846 @@
+import { once } from "node:events";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import pg from "pg";
+import { from as copyFrom } from "pg-copy-streams";
+import { openD1Database } from "../d1-sqlite.mjs";
+import { applyMigrations } from "../migrate.mjs";
+import { translateSqliteSql } from "../d1-postgres.mjs";
+
+const { Client } = pg;
+const args = new Set(process.argv.slice(2));
+const schemaOnly = args.has("--schema-only");
+const reset = args.has("--reset");
+const sourcePath = path.resolve(process.env.NARA_DB_PATH || path.join(process.env.NARA_DATA_DIR || ".nara-data", "nara001.sqlite"));
+const reportPath = path.resolve(process.env.POSTGRES_MIGRATION_REPORT || "outputs/postgres-migration-report.json");
+const connectionString = process.env.MIGRATION_DATABASE_URL || process.env.DATABASE_URL;
+const batchSize = Math.max(100, Math.min(5_000, Number(process.env.POSTGRES_COPY_BATCH_SIZE || 1_000)));
+
+const quote = (value) => `"${String(value).replaceAll('"', '""')}"`;
+const safeName = (value) => String(value).replace(/[^A-Za-z0-9_]/g, "_").slice(0, 48);
+
+function postgresType(sqliteType) {
+  const type = String(sqliteType || "").toUpperCase();
+  if (type.includes("BLOB")) return "BYTEA";
+  if (type.includes("REAL") || type.includes("FLOA") || type.includes("DOUB")) return "DOUBLE PRECISION";
+  if (type.includes("INT")) return "BIGINT";
+  if (type.includes("NUM") || type.includes("DEC")) return "NUMERIC";
+  return "TEXT";
+}
+
+function postgresDefault(value) {
+  if (value == null) return "";
+  const text = String(value);
+  if (/^NULL$/i.test(text)) return " DEFAULT NULL";
+  if (/^-?\d+(?:\.\d+)?$/.test(text)) return ` DEFAULT ${text}`;
+  if (/^'(?:[^']|'')*'$/.test(text)) return ` DEFAULT ${text}`;
+  if (/^CURRENT_(?:DATE|TIME|TIMESTAMP)$/i.test(text)) return ` DEFAULT ${text.toUpperCase()}`;
+  return "";
+}
+
+function csvValue(value) {
+  if (value === null || value === undefined) return "\\N";
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) return `"\\\\x${Buffer.from(value).toString("hex")}"`;
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function stableOrderColumns(definition) {
+  const primary = definition.columns
+    .filter((column) => Number(column.pk) > 0)
+    .sort((left, right) => Number(left.pk) - Number(right.pk));
+  return (primary.length ? primary : definition.columns).map((column) => column.name);
+}
+
+function canonicalRowLine(definition, row) {
+  return `${definition.columns.map((column) => csvValue(row[column.name])).join(",")}\n`;
+}
+
+function namedCheckConstraints(tableName, createSql) {
+  const source = String(createSql || "");
+  const constraints = [];
+  const pattern = /\bCONSTRAINT\s+(?:"([^"]+)"|`([^`]+)`|([A-Za-z_][A-Za-z0-9_]*))\s+CHECK\s*\(/gi;
+  let match;
+  while ((match = pattern.exec(source))) {
+    const name = match[1] ?? match[2] ?? match[3];
+    const open = pattern.lastIndex - 1;
+    let quoted = "";
+    let depth = 0;
+    let end = -1;
+    for (let index = open; index < source.length; index += 1) {
+      const character = source[index];
+      if (quoted) {
+        if (character === quoted) {
+          if (source[index + 1] === quoted) index += 1;
+          else quoted = "";
+        }
+        continue;
+      }
+      if (character === "'" || character === '"' || character === "`") {
+        quoted = character;
+        continue;
+      }
+      if (character === "(") depth += 1;
+      if (character === ")" && --depth === 0) {
+        end = index;
+        break;
+      }
+    }
+    if (end < 0) throw new Error(`Unable to parse CHECK constraint ${name} on ${tableName}`);
+    const expression = source.slice(open + 1, end)
+      .replaceAll("`", '"')
+      .replace(new RegExp(`"${String(tableName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\.`, "g"), "");
+    constraints.push(`CONSTRAINT ${quote(name)} CHECK (${expression})`);
+    pattern.lastIndex = end + 1;
+  }
+  return constraints;
+}
+
+function tableDefinitions(sqlite) {
+  return sqlite._allSync(`
+    SELECT name,sql FROM sqlite_master
+    WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name!='_node_migrations'
+    ORDER BY name
+  `).map(({ name, sql }) => {
+    const columns = sqlite._allSync(`PRAGMA table_info(${quote(name)})`);
+    const foreignKeys = sqlite._allSync(`PRAGMA foreign_key_list(${quote(name)})`);
+    const autoincrement = /AUTOINCREMENT/i.test(sql || "");
+    const primary = columns.filter((column) => Number(column.pk) > 0).sort((left, right) => left.pk - right.pk);
+    const definitions = columns.map((column) => {
+      const singleIdentity = autoincrement && primary.length === 1 && primary[0].name === column.name;
+      return [
+        quote(column.name),
+        singleIdentity ? "BIGINT GENERATED BY DEFAULT AS IDENTITY" : postgresType(column.type),
+        singleIdentity || (primary.length === 1 && primary[0].name === column.name) ? " PRIMARY KEY" : "",
+        Number(column.notnull) ? " NOT NULL" : "",
+        singleIdentity ? "" : postgresDefault(column.dflt_value),
+      ].join("");
+    });
+    if (primary.length > 1) definitions.push(`PRIMARY KEY (${primary.map((column) => quote(column.name)).join(",")})`);
+    definitions.push(...namedCheckConstraints(name, sql));
+    return { name, sql, columns, foreignKeys, definitions };
+  });
+}
+
+function indexDefinitions(sqlite) {
+  const explicit = sqlite._allSync(`
+    SELECT name,tbl_name AS tableName,sql FROM sqlite_master
+    WHERE type='index' AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+    ORDER BY name
+  `).map((row) => ({
+    ...row,
+    nocase: /COLLATE\s+NOCASE/i.test(row.sql),
+    sql: translateSqliteSql(row.sql)
+      .replace(/\bCREATE\s+(UNIQUE\s+)?INDEX\b/i, "CREATE $1INDEX IF NOT EXISTS"),
+  })).map((row) => ({
+    ...row,
+    sql: row.nocase
+      ? row.sql.replace(/\bLOWER\(([^)]+)\)(?=\s*[,)]|\s+(?:ASC|DESC))/gi, "LOWER($1) text_pattern_ops")
+      : row.sql,
+  }));
+  const inlineUnique = tableDefinitions(sqlite).flatMap((table) =>
+    sqlite._allSync(`PRAGMA index_list(${quote(table.name)})`)
+      .filter((index) => Number(index.unique) === 1 && index.origin === "u")
+      .map((index) => {
+        const columns = sqlite._allSync(`PRAGMA index_info(${quote(index.name)})`)
+          .sort((left, right) => left.seqno - right.seqno)
+          .map((column) => column.name);
+        const name = safeName(`uq_${table.name}_${columns.join("_")}`);
+        return {
+          name,
+          tableName: table.name,
+          sql: `CREATE UNIQUE INDEX IF NOT EXISTS ${quote(name)} ON ${quote(table.name)} (${columns.map(quote).join(",")})`,
+        };
+      }),
+  );
+  return [...explicit, ...inlineUnique];
+}
+
+async function copyTable(sqlite, client, definition) {
+  const count = Number(sqlite._allSync(`SELECT COUNT(*) AS count FROM ${quote(definition.name)}`)[0]?.count ?? 0);
+  if (!count) {
+    const checksum = sha256("");
+    return {
+      table: definition.name,
+      rows: 0,
+      sourceCount: 0,
+      targetCount: 0,
+      checksum,
+      sourceChecksum: checksum,
+      targetChecksum: checksum,
+      checksumMatch: true,
+    };
+  }
+  const columnSql = definition.columns.map((column) => quote(column.name)).join(",");
+  const orderSql = stableOrderColumns(definition).map(quote).join(",");
+  const stream = client.query(copyFrom(
+    `COPY ${quote(definition.name)} (${columnSql}) FROM STDIN WITH (FORMAT csv, NULL '\\N')`,
+  ));
+  const sourceHash = createHash("sha256");
+  let copied = 0;
+  try {
+    for (let offset = 0; offset < count; offset += batchSize) {
+      const rows = sqlite._allSync(
+        `SELECT ${columnSql} FROM ${quote(definition.name)} ORDER BY ${orderSql} LIMIT ? OFFSET ?`,
+        [batchSize, offset],
+      );
+      for (const row of rows) {
+        const line = canonicalRowLine(definition, row);
+        sourceHash.update(line);
+        copied += 1;
+        if (!stream.write(line)) await once(stream, "drain");
+      }
+    }
+    stream.end();
+    await once(stream, "finish");
+  } catch (error) {
+    stream.destroy(error);
+    throw error;
+  }
+  const target = await client.query(`SELECT COUNT(*)::bigint AS count FROM ${quote(definition.name)}`);
+  const targetCount = Number(target.rows[0]?.count ?? 0);
+  if (targetCount !== count || copied !== count) {
+    throw new Error(`Row-count mismatch for ${definition.name}: source=${count}, copied=${copied}, target=${targetCount}`);
+  }
+  const sourceChecksum = sourceHash.digest("hex");
+  const targetHash = createHash("sha256");
+  const cursorName = quote(safeName(`verify_${definition.name}`));
+  await client.query(`DECLARE ${cursorName} NO SCROLL CURSOR FOR SELECT ${columnSql} FROM ${quote(definition.name)} ORDER BY ${orderSql}`);
+  try {
+    while (true) {
+      const targetRows = await client.query(`FETCH FORWARD ${batchSize} FROM ${cursorName}`);
+      for (const row of targetRows.rows) targetHash.update(canonicalRowLine(definition, row));
+      if (targetRows.rowCount < batchSize) break;
+    }
+  } finally {
+    await client.query(`CLOSE ${cursorName}`).catch(() => undefined);
+  }
+  const targetChecksum = targetHash.digest("hex");
+  if (targetChecksum !== sourceChecksum) {
+    throw new Error(`Checksum mismatch for ${definition.name}: source=${sourceChecksum}, target=${targetChecksum}`);
+  }
+  return {
+    table: definition.name,
+    rows: copied,
+    sourceCount: count,
+    targetCount,
+    checksum: sourceChecksum,
+    sourceChecksum,
+    targetChecksum,
+    checksumMatch: true,
+  };
+}
+
+async function resetIdentities(client, definitions) {
+  for (const definition of definitions) {
+    const identity = definition.columns.find((column) =>
+      Number(column.pk) === 1 && /AUTOINCREMENT/i.test(definition.sql || "") && column.name === "id");
+    if (!identity) continue;
+    await client.query(`
+      SELECT setval(
+        pg_get_serial_sequence($1,$2),
+        GREATEST(COALESCE((SELECT MAX(${quote(identity.name)}) FROM ${quote(definition.name)}),0),1),
+        EXISTS(SELECT 1 FROM ${quote(definition.name)})
+      )
+    `, [definition.name, identity.name]);
+  }
+}
+
+const criticalAuditSql = `
+  SELECT
+    (SELECT COUNT(*) FROM users) AS users_total,
+    (SELECT COUNT(*) FROM users WHERE status='active') AS users_active,
+    (SELECT COALESCE(SUM(points),0) FROM users) AS users_points,
+    (SELECT COUNT(*) FROM posts) AS posts_total,
+    (SELECT COUNT(*) FROM posts WHERE status='published') AS posts_published,
+    (SELECT COUNT(*) FROM post_comments) AS comments_total,
+    (SELECT COUNT(*) FROM attendance) AS attendance_total,
+    (SELECT COUNT(*) FROM point_ledger) AS ledger_total,
+    (SELECT COALESCE(SUM(amount),0) FROM point_ledger) AS ledger_amount,
+    (SELECT COUNT(*) FROM support_inquiries) AS support_total,
+    (SELECT COUNT(*) FROM shop_purchases) AS purchases_total,
+    (SELECT COALESCE(SUM(stock),0) FROM shop_products) AS product_stock,
+    (SELECT COUNT(*) FROM shop_vouchers WHERE status='available') AS vouchers_available,
+    (SELECT COUNT(*) FROM shop_vouchers WHERE status='reserved') AS vouchers_reserved,
+    (SELECT COUNT(*) FROM shop_vouchers WHERE status='delivered') AS vouchers_delivered,
+    (SELECT COUNT(*) FROM admin_owners) AS owners_total,
+    (SELECT COUNT(*) FROM admin_owners WHERE status='active') AS owners_active
+`;
+
+function normalizeAuditRow(row) {
+  return Object.fromEntries(Object.entries(row ?? {}).map(([key, value]) => [key, Number(value ?? 0)]));
+}
+
+async function verifyCriticalAudit(sqlite, client) {
+  const source = normalizeAuditRow(sqlite._allSync(criticalAuditSql)[0]);
+  const target = normalizeAuditRow((await client.query(criticalAuditSql)).rows[0]);
+  const differences = Object.keys(source).filter((key) => source[key] !== target[key]);
+  if (differences.length) {
+    throw new Error(`Critical audit mismatch: ${differences.map((key) => `${key}=${source[key]}/${target[key]}`).join(", ")}`);
+  }
+  return { source, target, match: true };
+}
+
+async function installPostgresSearchIndexes(client) {
+  await client.query("CREATE EXTENSION IF NOT EXISTS pg_trgm");
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS vendor_posts_search_trgm_idx
+    ON vendor_posts USING gin (
+      (lower(industry || ' ' || region || ' ' || district || ' ' || title || ' ' || body))
+      gin_trgm_ops
+    )
+    WHERE status='published'
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS vendor_posts_feed_cursor_idx
+    ON vendor_posts (
+      (COALESCE(jumped_at,created_at)) DESC,
+      industry,region,district,id DESC
+    )
+    WHERE status='published'
+  `);
+}
+
+async function installAggregateTriggers(client) {
+  await client.query(`
+    CREATE OR REPLACE FUNCTION nara_now_text() RETURNS text
+    LANGUAGE sql VOLATILE AS $$
+      SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    $$;
+
+    CREATE OR REPLACE FUNCTION nara_period_start(source_value text, period_kind text, local_date boolean DEFAULT false)
+    RETURNS text LANGUAGE plpgsql IMMUTABLE AS $$
+    DECLARE instant timestamptz; local_value timestamp; boundary timestamptz;
+    BEGIN
+      instant := CASE WHEN local_date
+        THEN source_value::timestamp AT TIME ZONE 'Asia/Seoul'
+        ELSE source_value::timestamptz
+      END;
+      local_value := instant AT TIME ZONE 'Asia/Seoul';
+      boundary := date_trunc(CASE WHEN period_kind='weekly' THEN 'week' ELSE 'month' END, local_value)
+        AT TIME ZONE 'Asia/Seoul';
+      RETURN to_char(boundary AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:00.000"Z"');
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_adjust_member_stats(
+      target_user bigint, attendance_delta bigint, post_delta bigint, comment_delta bigint
+    ) RETURNS void LANGUAGE plpgsql AS $$
+    BEGIN
+      IF target_user IS NULL OR target_user<=0 THEN RETURN; END IF;
+      INSERT INTO member_activity_stats(user_id,attendance_count,post_count,comment_count,updated_at)
+      VALUES(target_user,GREATEST(attendance_delta,0),GREATEST(post_delta,0),GREATEST(comment_delta,0),nara_now_text())
+      ON CONFLICT(user_id) DO UPDATE SET
+        attendance_count=GREATEST(0,member_activity_stats.attendance_count+attendance_delta),
+        post_count=GREATEST(0,member_activity_stats.post_count+post_delta),
+        comment_count=GREATEST(0,member_activity_stats.comment_count+comment_delta),
+        updated_at=EXCLUDED.updated_at;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_adjust_post_stats(target_post bigint, delta bigint)
+    RETURNS void LANGUAGE plpgsql AS $$
+    BEGIN
+      IF target_post IS NULL OR target_post<=0 THEN RETURN; END IF;
+      INSERT INTO post_stats(post_id,comment_count,updated_at)
+      VALUES(target_post,GREATEST(delta,0),nara_now_text())
+      ON CONFLICT(post_id) DO UPDATE SET
+        comment_count=GREATEST(0,post_stats.comment_count+delta),updated_at=EXCLUDED.updated_at;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_attendance_stats() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP='INSERT' THEN
+        PERFORM nara_adjust_member_stats(NEW.user_id,1,0,0);
+        RETURN NEW;
+      ELSIF TG_OP='DELETE' THEN
+        PERFORM nara_adjust_member_stats(OLD.user_id,-1,0,0);
+        RETURN OLD;
+      END IF;
+      IF OLD.user_id IS DISTINCT FROM NEW.user_id THEN
+        PERFORM nara_adjust_member_stats(OLD.user_id,-1,0,0);
+        PERFORM nara_adjust_member_stats(NEW.user_id,1,0,0);
+      END IF;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_post_stats() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP='INSERT' THEN
+        IF NEW.status='published' THEN PERFORM nara_adjust_member_stats(NEW.author_id,0,1,0); END IF;
+        RETURN NEW;
+      ELSIF TG_OP='DELETE' THEN
+        IF OLD.status='published' THEN PERFORM nara_adjust_member_stats(OLD.author_id,0,-1,0); END IF;
+        RETURN OLD;
+      END IF;
+      IF OLD.status='published' AND (NEW.status!='published' OR OLD.author_id IS DISTINCT FROM NEW.author_id) THEN
+        PERFORM nara_adjust_member_stats(OLD.author_id,0,-1,0);
+      END IF;
+      IF NEW.status='published' AND (OLD.status!='published' OR OLD.author_id IS DISTINCT FROM NEW.author_id) THEN
+        PERFORM nara_adjust_member_stats(NEW.author_id,0,1,0);
+      END IF;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_comment_stats() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP='INSERT' THEN
+        IF NEW.status='published' THEN
+          PERFORM nara_adjust_member_stats(NEW.user_id,0,0,1);
+          PERFORM nara_adjust_post_stats(NEW.post_id,1);
+        END IF;
+        RETURN NEW;
+      ELSIF TG_OP='DELETE' THEN
+        IF OLD.status='published' THEN
+          PERFORM nara_adjust_member_stats(OLD.user_id,0,0,-1);
+          PERFORM nara_adjust_post_stats(OLD.post_id,-1);
+        END IF;
+        RETURN OLD;
+      END IF;
+      IF OLD.status='published' AND (
+        NEW.status!='published' OR OLD.user_id IS DISTINCT FROM NEW.user_id OR OLD.post_id IS DISTINCT FROM NEW.post_id
+      ) THEN
+        PERFORM nara_adjust_member_stats(OLD.user_id,0,0,-1);
+        PERFORM nara_adjust_post_stats(OLD.post_id,-1);
+      END IF;
+      IF NEW.status='published' AND (
+        OLD.status!='published' OR OLD.user_id IS DISTINCT FROM NEW.user_id OR OLD.post_id IS DISTINCT FROM NEW.post_id
+      ) THEN
+        PERFORM nara_adjust_member_stats(NEW.user_id,0,0,1);
+        PERFORM nara_adjust_post_stats(NEW.post_id,1);
+      END IF;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_support_reply_stats() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    DECLARE delta bigint; parent bigint;
+    BEGIN
+      delta := CASE WHEN TG_OP='INSERT' THEN 1 ELSE -1 END;
+      parent := CASE WHEN TG_OP='DELETE' THEN OLD.inquiry_id ELSE NEW.inquiry_id END;
+      INSERT INTO support_stats(inquiry_id,reply_count,updated_at)
+      VALUES(parent,GREATEST(delta,0),nara_now_text())
+      ON CONFLICT(inquiry_id) DO UPDATE SET
+        reply_count=GREATEST(0,support_stats.reply_count+delta),updated_at=EXCLUDED.updated_at;
+      IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_event_adjust(
+      target_board text,target_user bigint,source_value text,delta bigint,local_date boolean DEFAULT false
+    ) RETURNS void LANGUAGE plpgsql AS $$
+    BEGIN
+      IF target_user IS NULL OR target_user<=0 OR delta=0 THEN RETURN; END IF;
+      INSERT INTO event_activity_rollups(period_type,period_start,board_type,user_id,activity_count,updated_at)
+      VALUES
+        ('weekly',nara_period_start(source_value,'weekly',local_date),target_board,target_user,GREATEST(delta,0),nara_now_text()),
+        ('monthly',nara_period_start(source_value,'monthly',local_date),target_board,target_user,GREATEST(delta,0),nara_now_text())
+      ON CONFLICT(period_type,period_start,board_type,user_id) DO UPDATE SET
+        activity_count=GREATEST(0,event_activity_rollups.activity_count+delta),updated_at=EXCLUDED.updated_at;
+      DELETE FROM event_activity_rollups
+      WHERE activity_count<=0 AND board_type=target_board AND user_id=target_user
+        AND period_start IN (
+          nara_period_start(source_value,'weekly',local_date),
+          nara_period_start(source_value,'monthly',local_date)
+        );
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_event_posts() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP='INSERT' THEN
+        IF NEW.status='published' AND NEW.author_id>0 AND NEW.category IN ('reviews','gifs','community') THEN
+          PERFORM nara_event_adjust('posts',NEW.author_id,NEW.created_at,1,false);
+        END IF;
+        RETURN NEW;
+      ELSIF TG_OP='DELETE' THEN
+        IF OLD.status='published' AND OLD.author_id>0 AND OLD.category IN ('reviews','gifs','community') THEN
+          PERFORM nara_event_adjust('posts',OLD.author_id,OLD.created_at,-1,false);
+        END IF;
+        RETURN OLD;
+      END IF;
+      IF OLD.status='published' AND OLD.author_id>0 AND OLD.category IN ('reviews','gifs','community') THEN
+        PERFORM nara_event_adjust('posts',OLD.author_id,OLD.created_at,-1,false);
+      END IF;
+      IF NEW.status='published' AND NEW.author_id>0 AND NEW.category IN ('reviews','gifs','community') THEN
+        PERFORM nara_event_adjust('posts',NEW.author_id,NEW.created_at,1,false);
+      END IF;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_event_comments() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP='INSERT' THEN
+        IF NEW.status='published' THEN PERFORM nara_event_adjust('comments',NEW.user_id,NEW.created_at,1,false); END IF;
+        RETURN NEW;
+      ELSIF TG_OP='DELETE' THEN
+        IF OLD.status='published' THEN PERFORM nara_event_adjust('comments',OLD.user_id,OLD.created_at,-1,false); END IF;
+        RETURN OLD;
+      END IF;
+      IF OLD.status='published' THEN PERFORM nara_event_adjust('comments',OLD.user_id,OLD.created_at,-1,false); END IF;
+      IF NEW.status='published' THEN PERFORM nara_event_adjust('comments',NEW.user_id,NEW.created_at,1,false); END IF;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_event_attendance() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP='INSERT' THEN
+        PERFORM nara_event_adjust('comments',NEW.user_id,NEW.attendance_date,1,true);
+        RETURN NEW;
+      ELSIF TG_OP='DELETE' THEN
+        PERFORM nara_event_adjust('comments',OLD.user_id,OLD.attendance_date,-1,true);
+        RETURN OLD;
+      END IF;
+      PERFORM nara_event_adjust('comments',OLD.user_id,OLD.attendance_date,-1,true);
+      PERFORM nara_event_adjust('comments',NEW.user_id,NEW.attendance_date,1,true);
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_partner_requires_director() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.is_partner=1 AND NEW.is_director<>1 THEN NEW.is_director := 1; END IF;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_featured_vendor_prevent_delete() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'fixed_featured_vendor_post_cannot_be_deleted';
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_shop_purchase_validate() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    DECLARE member_points bigint; member_level bigint; member_status text;
+      product_price bigint; product_level bigint; product_stock bigint; product_status text; product_name text;
+    BEGIN
+      IF length(trim(NEW.request_key))<12 OR NEW.voucher_id IS NOT NULL OR NEW.support_inquiry_id IS NOT NULL
+        OR NEW.status!='pending_delivery' OR NEW.delivered_at IS NOT NULL
+      THEN RAISE EXCEPTION 'shop_request_invalid'; END IF;
+      SELECT points,level,status INTO member_points,member_level,member_status
+      FROM users WHERE id=NEW.user_id FOR UPDATE;
+      IF NOT FOUND OR member_status!='active' THEN RAISE EXCEPTION 'shop_member_unavailable'; END IF;
+      SELECT price,min_level,stock,status,name INTO product_price,product_level,product_stock,product_status,product_name
+      FROM shop_products WHERE id=NEW.product_id FOR UPDATE;
+      IF NOT FOUND OR product_status!='active' THEN RAISE EXCEPTION 'shop_product_unavailable'; END IF;
+      IF member_level<product_level THEN RAISE EXCEPTION 'shop_level_insufficient'; END IF;
+      IF NEW.price!=product_price OR NEW.product_name!=product_name THEN RAISE EXCEPTION 'shop_product_changed'; END IF;
+      IF member_points<NEW.price THEN RAISE EXCEPTION 'shop_points_insufficient'; END IF;
+      IF product_stock<1 THEN RAISE EXCEPTION 'shop_stock_insufficient'; END IF;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_shop_purchase_apply() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    DECLARE inquiry_id bigint;
+    BEGIN
+      UPDATE users SET points=points-NEW.price WHERE id=NEW.user_id;
+      UPDATE shop_products SET stock=stock-1,updated_at=NEW.created_at WHERE id=NEW.product_id;
+      INSERT INTO point_ledger(user_id,amount,type,status,reference,created_at)
+      VALUES(NEW.user_id,-NEW.price,'shop_purchase','complete','shop-purchase:' || NEW.id,NEW.created_at);
+      INSERT INTO support_inquiries(
+        user_id,kind,title,body,status,staff_unread,member_unread,shop_purchase_id,created_at,updated_at
+      ) VALUES(
+        NEW.user_id,'support','상품 구매 · ' || NEW.product_name,
+        '<p><strong>상품 구매가 완료되었습니다.</strong></p><p>자동상품 지급을 준비하고 있습니다.</p>',
+        'open',0,0,NEW.id,NEW.created_at,NEW.created_at
+      ) RETURNING id INTO inquiry_id;
+      UPDATE shop_purchases SET support_inquiry_id=inquiry_id WHERE id=NEW.id;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_shop_voucher_validate() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP='INSERT' THEN
+        IF NEW.status!='available' OR NEW.purchase_id IS NOT NULL THEN RAISE EXCEPTION 'shop_voucher_state_invalid'; END IF;
+        RETURN NEW;
+      END IF;
+      IF (NEW.status='available' AND NEW.purchase_id IS NOT NULL)
+        OR (NEW.status IN ('reserved','delivered') AND NEW.purchase_id IS NULL)
+      THEN RAISE EXCEPTION 'shop_voucher_state_invalid'; END IF;
+      IF NEW.purchase_id IS NOT NULL AND NOT EXISTS(
+        SELECT 1 FROM shop_purchases p WHERE p.id=NEW.purchase_id AND p.product_id=NEW.product_id
+      ) THEN RAISE EXCEPTION 'shop_voucher_purchase_invalid'; END IF;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_shop_support_validate() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.shop_purchase_id IS NOT NULL AND NOT EXISTS(
+        SELECT 1 FROM shop_purchases p WHERE p.id=NEW.shop_purchase_id AND p.user_id=NEW.user_id
+      ) THEN RAISE EXCEPTION 'shop_support_purchase_invalid'; END IF;
+      RETURN NEW;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION nara_shop_purchase_links_validate() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF (NEW.status='pending_delivery' AND (NEW.voucher_id IS NOT NULL OR NEW.delivered_at IS NOT NULL))
+        OR (NEW.status='delivered' AND (NEW.voucher_id IS NULL OR NEW.support_inquiry_id IS NULL OR NEW.delivered_at IS NULL))
+      THEN RAISE EXCEPTION 'shop_purchase_state_invalid'; END IF;
+      IF NEW.voucher_id IS NOT NULL AND NOT EXISTS(
+        SELECT 1 FROM shop_vouchers v
+        WHERE v.id=NEW.voucher_id AND v.purchase_id=NEW.id AND v.product_id=NEW.product_id
+      ) THEN RAISE EXCEPTION 'shop_purchase_voucher_invalid'; END IF;
+      IF NEW.support_inquiry_id IS NOT NULL AND NOT EXISTS(
+        SELECT 1 FROM support_inquiries s
+        WHERE s.id=NEW.support_inquiry_id AND s.shop_purchase_id=NEW.id AND s.user_id=NEW.user_id
+      ) THEN RAISE EXCEPTION 'shop_purchase_support_invalid'; END IF;
+      RETURN NEW;
+    END $$;
+
+    DROP TRIGGER IF EXISTS featured_vendor_posts_prevent_delete ON featured_vendor_posts;
+    CREATE TRIGGER featured_vendor_posts_prevent_delete BEFORE DELETE ON featured_vendor_posts
+      FOR EACH ROW EXECUTE FUNCTION nara_featured_vendor_prevent_delete();
+
+    DROP TRIGGER IF EXISTS shop_purchase_validate_before_insert ON shop_purchases;
+    CREATE TRIGGER shop_purchase_validate_before_insert BEFORE INSERT ON shop_purchases
+      FOR EACH ROW EXECUTE FUNCTION nara_shop_purchase_validate();
+    DROP TRIGGER IF EXISTS shop_purchase_apply_after_insert ON shop_purchases;
+    CREATE TRIGGER shop_purchase_apply_after_insert AFTER INSERT ON shop_purchases
+      FOR EACH ROW EXECUTE FUNCTION nara_shop_purchase_apply();
+    DROP TRIGGER IF EXISTS shop_voucher_state_validate_before_insert ON shop_vouchers;
+    CREATE TRIGGER shop_voucher_state_validate_before_insert BEFORE INSERT ON shop_vouchers
+      FOR EACH ROW EXECUTE FUNCTION nara_shop_voucher_validate();
+    DROP TRIGGER IF EXISTS shop_voucher_purchase_validate_before_update ON shop_vouchers;
+    CREATE TRIGGER shop_voucher_purchase_validate_before_update BEFORE UPDATE OF purchase_id,product_id,status ON shop_vouchers
+      FOR EACH ROW EXECUTE FUNCTION nara_shop_voucher_validate();
+    DROP TRIGGER IF EXISTS shop_support_purchase_validate_before_insert ON support_inquiries;
+    CREATE TRIGGER shop_support_purchase_validate_before_insert BEFORE INSERT ON support_inquiries
+      FOR EACH ROW EXECUTE FUNCTION nara_shop_support_validate();
+    DROP TRIGGER IF EXISTS shop_support_purchase_validate_before_update ON support_inquiries;
+    CREATE TRIGGER shop_support_purchase_validate_before_update BEFORE UPDATE OF shop_purchase_id,user_id ON support_inquiries
+      FOR EACH ROW EXECUTE FUNCTION nara_shop_support_validate();
+    DROP TRIGGER IF EXISTS shop_purchase_links_validate_before_update ON shop_purchases;
+    CREATE TRIGGER shop_purchase_links_validate_before_update
+      BEFORE UPDATE OF voucher_id,support_inquiry_id,product_id,user_id,status,delivered_at ON shop_purchases
+      FOR EACH ROW EXECUTE FUNCTION nara_shop_purchase_links_validate();
+
+    DROP TRIGGER IF EXISTS users_partner_requires_director_after_insert ON users;
+    DROP TRIGGER IF EXISTS users_partner_requires_director_after_update ON users;
+    CREATE TRIGGER users_partner_requires_director_after_insert
+      BEFORE INSERT ON users FOR EACH ROW EXECUTE FUNCTION nara_partner_requires_director();
+    CREATE TRIGGER users_partner_requires_director_after_update
+      BEFORE UPDATE OF is_partner,is_director ON users FOR EACH ROW EXECUTE FUNCTION nara_partner_requires_director();
+
+    DROP TRIGGER IF EXISTS member_activity_attendance_insert ON attendance;
+    DROP TRIGGER IF EXISTS member_activity_attendance_delete ON attendance;
+    DROP TRIGGER IF EXISTS member_activity_attendance_update ON attendance;
+    CREATE TRIGGER member_activity_attendance_insert AFTER INSERT ON attendance
+      FOR EACH ROW EXECUTE FUNCTION nara_attendance_stats();
+    CREATE TRIGGER member_activity_attendance_delete AFTER DELETE ON attendance
+      FOR EACH ROW EXECUTE FUNCTION nara_attendance_stats();
+    CREATE TRIGGER member_activity_attendance_update AFTER UPDATE OF user_id ON attendance
+      FOR EACH ROW EXECUTE FUNCTION nara_attendance_stats();
+
+    DROP TRIGGER IF EXISTS member_activity_post_insert ON posts;
+    DROP TRIGGER IF EXISTS member_activity_post_status ON posts;
+    DROP TRIGGER IF EXISTS member_activity_post_delete ON posts;
+    CREATE TRIGGER member_activity_post_insert AFTER INSERT ON posts
+      FOR EACH ROW EXECUTE FUNCTION nara_post_stats();
+    CREATE TRIGGER member_activity_post_status AFTER UPDATE OF status,author_id ON posts
+      FOR EACH ROW EXECUTE FUNCTION nara_post_stats();
+    CREATE TRIGGER member_activity_post_delete AFTER DELETE ON posts
+      FOR EACH ROW EXECUTE FUNCTION nara_post_stats();
+
+    DROP TRIGGER IF EXISTS member_activity_comment_insert ON post_comments;
+    DROP TRIGGER IF EXISTS member_activity_comment_status ON post_comments;
+    DROP TRIGGER IF EXISTS member_activity_comment_delete ON post_comments;
+    CREATE TRIGGER member_activity_comment_insert AFTER INSERT ON post_comments
+      FOR EACH ROW EXECUTE FUNCTION nara_comment_stats();
+    CREATE TRIGGER member_activity_comment_status AFTER UPDATE OF status,user_id,post_id ON post_comments
+      FOR EACH ROW EXECUTE FUNCTION nara_comment_stats();
+    CREATE TRIGGER member_activity_comment_delete AFTER DELETE ON post_comments
+      FOR EACH ROW EXECUTE FUNCTION nara_comment_stats();
+
+    DROP TRIGGER IF EXISTS support_stats_reply_insert ON support_inquiry_replies;
+    DROP TRIGGER IF EXISTS support_stats_reply_delete ON support_inquiry_replies;
+    CREATE TRIGGER support_stats_reply_insert AFTER INSERT ON support_inquiry_replies
+      FOR EACH ROW EXECUTE FUNCTION nara_support_reply_stats();
+    CREATE TRIGGER support_stats_reply_delete AFTER DELETE ON support_inquiry_replies
+      FOR EACH ROW EXECUTE FUNCTION nara_support_reply_stats();
+
+    DROP TRIGGER IF EXISTS event_activity_posts_insert ON posts;
+    DROP TRIGGER IF EXISTS event_activity_posts_update ON posts;
+    DROP TRIGGER IF EXISTS event_activity_posts_delete ON posts;
+    CREATE TRIGGER event_activity_posts_insert AFTER INSERT ON posts
+      FOR EACH ROW EXECUTE FUNCTION nara_event_posts();
+    CREATE TRIGGER event_activity_posts_update AFTER UPDATE OF status,author_id,category,created_at ON posts
+      FOR EACH ROW EXECUTE FUNCTION nara_event_posts();
+    CREATE TRIGGER event_activity_posts_delete AFTER DELETE ON posts
+      FOR EACH ROW EXECUTE FUNCTION nara_event_posts();
+
+    DROP TRIGGER IF EXISTS event_activity_comments_insert ON post_comments;
+    DROP TRIGGER IF EXISTS event_activity_comments_update ON post_comments;
+    DROP TRIGGER IF EXISTS event_activity_comments_delete ON post_comments;
+    CREATE TRIGGER event_activity_comments_insert AFTER INSERT ON post_comments
+      FOR EACH ROW EXECUTE FUNCTION nara_event_comments();
+    CREATE TRIGGER event_activity_comments_update AFTER UPDATE OF status,user_id,created_at ON post_comments
+      FOR EACH ROW EXECUTE FUNCTION nara_event_comments();
+    CREATE TRIGGER event_activity_comments_delete AFTER DELETE ON post_comments
+      FOR EACH ROW EXECUTE FUNCTION nara_event_comments();
+
+    DROP TRIGGER IF EXISTS event_activity_attendance_insert ON attendance;
+    DROP TRIGGER IF EXISTS event_activity_attendance_update ON attendance;
+    DROP TRIGGER IF EXISTS event_activity_attendance_delete ON attendance;
+    CREATE TRIGGER event_activity_attendance_insert AFTER INSERT ON attendance
+      FOR EACH ROW EXECUTE FUNCTION nara_event_attendance();
+    CREATE TRIGGER event_activity_attendance_update AFTER UPDATE OF user_id,attendance_date ON attendance
+      FOR EACH ROW EXECUTE FUNCTION nara_event_attendance();
+    CREATE TRIGGER event_activity_attendance_delete AFTER DELETE ON attendance
+      FOR EACH ROW EXECUTE FUNCTION nara_event_attendance();
+  `);
+}
+
+async function run() {
+  if (!connectionString) throw new Error("MIGRATION_DATABASE_URL or DATABASE_URL is required");
+  const sqlite = openD1Database(sourcePath);
+  applyMigrations(sqlite);
+  sqlite._execSync("PRAGMA wal_checkpoint(TRUNCATE)");
+  const sourceSha256 = sha256(readFileSync(sourcePath));
+  sqlite._execSync("BEGIN IMMEDIATE");
+  const definitions = tableDefinitions(sqlite);
+  const indexes = indexDefinitions(sqlite);
+  const client = new Client({
+    connectionString,
+    ssl: process.env.POSTGRES_SSL === "disable" ? false : { rejectUnauthorized: false },
+    application_name: "nara001-migration",
+  });
+  const startedAt = new Date().toISOString();
+  const copied = [];
+  let connected = false;
+  let sqliteTransactionOpen = true;
+  try {
+    await client.connect();
+    connected = true;
+    await client.query("SELECT pg_advisory_lock(hashtext('nara001-schema-migration'))");
+    await client.query("BEGIN");
+    const existing = await client.query(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema=current_schema() AND table_type='BASE TABLE'
+        AND table_name NOT LIKE 'pg_%'
+    `);
+    if (existing.rowCount && !reset) {
+      throw new Error("Target schema is not empty. Use a new database or pass --reset for an explicit rehearsal reset.");
+    }
+    if (reset) {
+      for (const { table_name: tableName } of existing.rows) {
+        await client.query(`DROP TABLE IF EXISTS ${quote(tableName)} CASCADE`);
+      }
+    }
+    for (const definition of definitions) {
+      await client.query(`CREATE TABLE ${quote(definition.name)} (\n${definition.definitions.join(",\n")}\n)`);
+    }
+    await client.query(`
+      CREATE TABLE nara_schema_migrations (
+        name TEXT PRIMARY KEY,
+        checksum TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      )
+    `);
+    const sourceMigrations = sqlite._allSync("SELECT name,checksum,applied_at FROM _node_migrations ORDER BY name");
+    for (const migration of sourceMigrations) {
+      await client.query(
+        "INSERT INTO nara_schema_migrations(name,checksum,applied_at) VALUES($1,$2,$3)",
+        [migration.name, migration.checksum, migration.applied_at],
+      );
+    }
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS migration_audit (
+        id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+        source_path TEXT NOT NULL,
+        source_sha256 TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        schema_only BIGINT NOT NULL DEFAULT 0,
+        report_json TEXT
+      )
+    `);
+    await client.query("COMMIT");
+    await client.query("BEGIN");
+
+    if (!schemaOnly) {
+      for (const definition of definitions) copied.push(await copyTable(sqlite, client, definition));
+      await resetIdentities(client, definitions);
+    }
+    for (const index of indexes) {
+      try {
+        await client.query(index.sql);
+      } catch (error) {
+        throw new Error(`Failed to create index ${index.name}: ${error.message}`, { cause: error });
+      }
+    }
+    await installPostgresSearchIndexes(client);
+    await installAggregateTriggers(client);
+    for (const definition of definitions) {
+      for (const foreignKey of definition.foreignKeys) {
+        const constraint = safeName(`fk_${definition.name}_${foreignKey.from}_${foreignKey.table}_${foreignKey.to}`);
+        await client.query(`
+          ALTER TABLE ${quote(definition.name)}
+          ADD CONSTRAINT ${quote(constraint)}
+          FOREIGN KEY (${quote(foreignKey.from)}) REFERENCES ${quote(foreignKey.table)} (${quote(foreignKey.to)})
+          ON UPDATE ${String(foreignKey.on_update || "NO ACTION")}
+          ON DELETE ${String(foreignKey.on_delete || "NO ACTION")}
+          NOT VALID
+        `);
+        await client.query(`ALTER TABLE ${quote(definition.name)} VALIDATE CONSTRAINT ${quote(constraint)}`);
+      }
+    }
+    const criticalAudit = schemaOnly ? null : await verifyCriticalAudit(sqlite, client);
+    const sourceStat = sqlite._allSync("SELECT COUNT(*) AS count FROM sqlite_master")[0]?.count ?? 0;
+    const report = {
+      startedAt,
+      completedAt: new Date().toISOString(),
+      sourcePath,
+      sourceSha256,
+      sourceCatalogEntries: Number(sourceStat),
+      schemaOnly,
+      tables: definitions.length,
+      indexes: indexes.length,
+      copied,
+      criticalAudit,
+    };
+    mkdirSync(path.dirname(reportPath), { recursive: true });
+    writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    await client.query(`
+      INSERT INTO migration_audit(source_path,source_sha256,started_at,completed_at,schema_only,report_json)
+      VALUES($1,$2,$3,$4,$5,$6)
+    `, [sourcePath, sourceSha256, startedAt, report.completedAt, schemaOnly ? 1 : 0, JSON.stringify(report)]);
+    await client.query("COMMIT");
+    sqlite._execSync("COMMIT");
+    sqliteTransactionOpen = false;
+    console.log(JSON.stringify(report));
+  } catch (error) {
+    if (connected) await client.query("ROLLBACK").catch(() => undefined);
+    if (sqliteTransactionOpen) sqlite._execSync("ROLLBACK");
+    throw error;
+  } finally {
+    if (connected) {
+      await client.query("SELECT pg_advisory_unlock(hashtext('nara001-schema-migration'))").catch(() => undefined);
+      await client.end();
+    }
+    sqlite.close();
+  }
+}
+
+export {
+  indexDefinitions,
+  namedCheckConstraints,
+  postgresDefault,
+  postgresType,
+  tableDefinitions,
+};
+
+const isMainModule = Boolean(process.argv[1])
+  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMainModule) await run();

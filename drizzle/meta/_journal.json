@@ -239,6 +239,97 @@
       "when": 1784713163328,
       "tag": "0033_harsh_black_widow",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1784723838700,
+      "tag": "0034_green_wonder_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1784725064329,
+      "tag": "0035_moaning_zemo",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1784728004867,
+      "tag": "0036_faulty_midnight",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1784728374495,
+      "tag": "0037_blue_blue_shield",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1784728584369,
+      "tag": "0038_wakeful_oracle",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1784730412823,
+      "tag": "0039_cuddly_roland_deschain",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1784731689599,
+      "tag": "0040_late_sprite",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1784733678945,
+      "tag": "0041_moaning_demogoblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1784751977903,
+      "tag": "0042_wandering_onslaught",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1784755140565,
+      "tag": "0043_yummy_the_fury",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1784814953754,
+      "tag": "0044_medical_nekra",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1784816016823,
+      "tag": "0045_lowly_cyclops",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "6",
+      "when": 1784816040055,
+      "tag": "0046_nostalgic_thor_girl",
+      "breakpoints": true
     }
   ]
 }

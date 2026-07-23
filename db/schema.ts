@@ -17,7 +17,15 @@ export const users = sqliteTable("users", {
   role: text("role").notNull().default("member"),
   status: text("status").notNull().default("active"),
   createdAt: text("created_at").notNull(),
-});
+}, (table) => [
+  index("users_created_id_idx").on(table.createdAt, table.id),
+  index("users_points_id_idx").on(table.points, table.id),
+  index("users_level_id_idx").on(table.level, table.id),
+  index("users_username_nocase_id_idx").on(sql`${table.username} COLLATE NOCASE`, table.id),
+  index("users_nickname_nocase_id_idx").on(sql`${table.nickname} COLLATE NOCASE`, table.id),
+  index("users_director_created_id_idx").on(table.isDirector, table.createdAt, table.id),
+  index("users_partner_created_id_idx").on(table.isPartner, table.createdAt, table.id),
+]);
 
 export const sessions = sqliteTable("sessions", {
   token: text("token").primaryKey(),
@@ -25,7 +33,7 @@ export const sessions = sqliteTable("sessions", {
   ip: text("ip").notNull(),
   expiresAt: text("expires_at").notNull(),
   createdAt: text("created_at").notNull(),
-});
+}, (table) => [index("sessions_expires_token_idx").on(table.expiresAt, table.token)]);
 
 export const attendance = sqliteTable("attendance", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -34,7 +42,11 @@ export const attendance = sqliteTable("attendance", {
   pointsAwarded: integer("points_awarded").notNull().default(50),
   greeting: text("greeting").notNull().default("오늘도 출장나라와 함께해요"),
   createdAt: text("created_at").notNull().default(""),
-}, (table) => [uniqueIndex("attendance_user_date_unique").on(table.userId, table.attendanceDate)]);
+}, (table) => [
+  uniqueIndex("attendance_user_date_unique").on(table.userId, table.attendanceDate),
+  index("attendance_date_user_idx").on(table.attendanceDate, table.userId),
+  index("attendance_date_created_id_idx").on(table.attendanceDate, table.createdAt, table.id),
+]);
 
 export const attendanceStreakRewards = sqliteTable("attendance_streak_rewards", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -58,7 +70,18 @@ export const pointLedger = sqliteTable("point_ledger", {
   status: text("status").notNull().default("complete"),
   reference: text("reference"),
   createdAt: text("created_at").notNull(),
-});
+}, (table) => [
+  uniqueIndex("point_ledger_event_reward_user_reference_unique")
+    .on(table.userId, table.type, table.reference)
+    .where(sql`${table.type} = 'event_reward' AND ${table.reference} IS NOT NULL`),
+  index("point_ledger_attendance_streak_user_reference_idx")
+    .on(table.userId, table.reference)
+    .where(sql`${table.type} = 'attendance_streak_reward'`),
+  index("point_ledger_user_id_idx").on(table.userId, table.id),
+  uniqueIndex("point_ledger_content_reward_user_reference_unique")
+    .on(table.userId, table.type, table.reference)
+    .where(sql`${table.type} IN ('post_create','review_create','comment_create') AND ${table.reference} IS NOT NULL`),
+]);
 
 export const posts = sqliteTable("posts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -76,10 +99,21 @@ export const posts = sqliteTable("posts", {
   isNotice: integer("is_notice", { mode: "boolean" }).notNull().default(false),
   isPinned: integer("is_pinned", { mode: "boolean" }).notNull().default(false),
   status: text("status").notNull().default("published"),
+  deletedAt: text("deleted_at"),
   createdAt: text("created_at").notNull(),
 }, (table) => [
   index("posts_category_pinned_id_idx").on(table.category, table.isPinned, table.id),
   index("posts_category_status_created_idx").on(table.category, table.status, table.createdAt),
+  index("posts_author_status_idx").on(table.authorId, table.status),
+  index("posts_draft_created_id_idx")
+    .on(table.createdAt, table.id)
+    .where(sql`${table.status} = 'draft'`),
+  index("posts_deleted_retention_idx")
+    .on(table.deletedAt, table.id)
+    .where(sql`${table.status} = 'deleted' AND ${table.deletedAt} IS NOT NULL`),
+  index("posts_event_activity_idx")
+    .on(table.createdAt, table.authorId)
+    .where(sql`${table.status} = 'published' AND ${table.category} IN ('reviews','gifs','community')`),
 ]);
 
 export const postComments = sqliteTable("post_comments", {
@@ -89,7 +123,16 @@ export const postComments = sqliteTable("post_comments", {
   body: text("body").notNull(),
   status: text("status").notNull().default("published"),
   createdAt: text("created_at").notNull(),
-});
+}, (table) => [
+  index("post_comments_user_status_idx").on(table.userId, table.status),
+  index("post_comments_post_status_id_idx").on(table.postId, table.status, table.id),
+  index("post_comments_pending_created_id_idx")
+    .on(table.createdAt, table.id)
+    .where(sql`${table.status} = 'pending'`),
+  index("post_comments_event_activity_idx")
+    .on(table.createdAt, table.userId)
+    .where(sql`${table.status} = 'published'`),
+]);
 
 export const adminOwners = sqliteTable("admin_owners", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -105,14 +148,28 @@ export const adminIpLoginFailures = sqliteTable("admin_ip_login_failures", {
   failureCount: integer("failure_count").notNull().default(0),
   blockedUntil: text("blocked_until"),
   updatedAt: text("updated_at").notNull(),
-});
+}, (table) => [index("admin_ip_login_failures_updated_idx").on(table.updatedAt, table.ip)]);
 
 export const adminAccountLoginFailures = sqliteTable("admin_account_login_failures", {
   username: text("username").primaryKey(),
   failureCount: integer("failure_count").notNull().default(0),
   blockedUntil: text("blocked_until"),
   updatedAt: text("updated_at").notNull(),
-});
+}, (table) => [index("admin_account_login_failures_updated_idx").on(table.updatedAt, table.username)]);
+
+export const memberIpLoginFailures = sqliteTable("member_ip_login_failures", {
+  ip: text("ip").primaryKey(),
+  failureCount: integer("failure_count").notNull().default(0),
+  blockedUntil: text("blocked_until"),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [index("member_ip_login_failures_updated_idx").on(table.updatedAt, table.ip)]);
+
+export const memberAccountLoginFailures = sqliteTable("member_account_login_failures", {
+  username: text("username").primaryKey(),
+  failureCount: integer("failure_count").notNull().default(0),
+  blockedUntil: text("blocked_until"),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [index("member_account_login_failures_updated_idx").on(table.updatedAt, table.username)]);
 
 export const uploadUsage = sqliteTable("upload_usage", {
   id: text("id").primaryKey(),
@@ -320,6 +377,19 @@ export const shopVouchers = sqliteTable("shop_vouchers", {
   index("shop_vouchers_product_status_id_idx").on(table.productId, table.status, table.id),
 ]);
 
+export const shopVoucherCleanupQueue = sqliteTable("shop_voucher_cleanup_queue", {
+  voucherId: integer("voucher_id").primaryKey(),
+  productId: integer("product_id").notNull(),
+  objectKey: text("object_key").notNull().unique(),
+  cleanupToken: text("cleanup_token").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+    index("shop_voucher_cleanup_product_id_idx").on(table.productId, table.attempts, table.voucherId),
+  index("shop_voucher_cleanup_token_idx").on(table.cleanupToken),
+]);
+
 export const supportRooms = sqliteTable("support_rooms", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull().unique(),
@@ -353,7 +423,23 @@ export const supportInquiries = sqliteTable("support_inquiries", {
   shopPurchaseId: integer("shop_purchase_id"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
-}, (table) => [uniqueIndex("support_inquiries_shop_purchase_unique").on(table.shopPurchaseId)]);
+}, (table) => [
+  uniqueIndex("support_inquiries_shop_purchase_unique").on(table.shopPurchaseId),
+  index("support_inquiries_member_kind_id_idx").on(table.userId, table.kind, table.id),
+  index("support_inquiries_admin_kind_status_updated_idx").on(table.kind, table.status, table.staffUnread, table.updatedAt, table.id),
+  index("support_inquiries_admin_priority_idx")
+    .on(
+      table.kind,
+      sql`(CASE WHEN ${table.status}='open' THEN 0 ELSE 1 END)`,
+      sql`${table.staffUnread} DESC`,
+      sql`${table.updatedAt} DESC`,
+      sql`${table.id} DESC`,
+    )
+    .where(sql`${table.status} != 'deleted'`),
+  index("support_inquiries_admin_title_nocase_idx")
+    .on(table.kind, sql`${table.title} COLLATE NOCASE`, table.id)
+    .where(sql`${table.status} != 'deleted'`),
+]);
 
 export const supportInquiryReplies = sqliteTable("support_inquiry_replies", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -362,7 +448,18 @@ export const supportInquiryReplies = sqliteTable("support_inquiry_replies", {
   senderId: text("sender_id").notNull(),
   body: text("body").notNull(),
   createdAt: text("created_at").notNull(),
-});
+}, (table) => [index("support_inquiry_replies_inquiry_id_idx").on(table.inquiryId, table.id)]);
+
+export const supportWriteRateLimits = sqliteTable("support_write_rate_limits", {
+  actorKey: text("actor_key").notNull(),
+  action: text("action").notNull(),
+  windowStart: integer("window_start").notNull(),
+  requestCount: integer("request_count").notNull().default(1),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("support_write_rate_limits_bucket_unique").on(table.actorKey, table.action, table.windowStart),
+  index("support_write_rate_limits_window_idx").on(table.windowStart),
+]);
 
 export const eventRewardPayouts = sqliteTable("event_reward_payouts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -377,7 +474,38 @@ export const eventRewardPayouts = sqliteTable("event_reward_payouts", {
   nicknameSnapshot: text("nickname_snapshot"),
   levelSnapshot: integer("level_snapshot"),
   createdAt: text("created_at").notNull(),
-}, (table) => [uniqueIndex("event_reward_payouts_period_user_unique").on(table.periodType, table.boardType, table.periodStart, table.userId)]);
+}, (table) => [
+  uniqueIndex("event_reward_payouts_period_user_unique").on(table.periodType, table.boardType, table.periodStart, table.userId),
+  uniqueIndex("event_reward_payouts_period_rank_unique").on(table.periodType, table.boardType, table.periodStart, table.rank),
+  index("event_reward_payouts_period_rank_idx").on(table.periodType, table.boardType, table.periodStart, table.rank),
+  index("event_reward_payouts_audit_idx").on(table.periodType, table.periodStart, table.boardType, table.rank),
+]);
+
+export const eventActivityRollups = sqliteTable("event_activity_rollups", {
+  periodType: text("period_type").notNull(),
+  periodStart: text("period_start").notNull(),
+  boardType: text("board_type").notNull(),
+  userId: integer("user_id").notNull(),
+  activityCount: integer("activity_count").notNull().default(0),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("event_activity_rollups_period_user_unique")
+    .on(table.periodType, table.periodStart, table.boardType, table.userId),
+  index("event_activity_rollups_ranking_idx")
+    .on(table.periodType, table.boardType, table.periodStart, sql`${table.activityCount} DESC`, table.userId),
+  index("event_activity_rollups_period_discovery_idx")
+    .on(table.periodType, table.periodStart),
+]);
+
+export const eventRollupCleanupQueue = sqliteTable("event_rollup_cleanup_queue", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  periodType: text("period_type").notNull(),
+  periodStart: text("period_start").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("event_rollup_cleanup_period_unique").on(table.periodType, table.periodStart),
+  index("event_rollup_cleanup_created_idx").on(table.createdAt, table.id),
+]);
 
 export const siteSettings = sqliteTable("site_settings", {
   key: text("key").primaryKey(),
@@ -401,6 +529,7 @@ export const systemAnnouncements = sqliteTable("system_announcements", {
   check("system_announcements_status_check", sql`${table.status} IN ('active','cancelled')`),
   check("system_announcements_window_check", sql`${table.startsAt} < ${table.endsAt}`),
   index("system_announcements_active_window_idx").on(table.status, table.startsAt, table.endsAt, table.id),
+  index("system_announcements_ends_id_idx").on(table.endsAt, table.id),
 ]);
 
 export const systemAnnouncementReceipts = sqliteTable("system_announcement_receipts", {
@@ -413,3 +542,41 @@ export const systemAnnouncementReceipts = sqliteTable("system_announcement_recei
   uniqueIndex("system_announcement_receipts_announcement_user_unique").on(table.announcementId, table.userId),
   index("system_announcement_receipts_user_ack_idx").on(table.userId, table.acknowledgedAt, table.announcementId),
 ]);
+
+export const outboxJobs = sqliteTable("outbox_jobs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  topic: text("topic").notNull(),
+  payload: text("payload").notNull().default("{}"),
+  status: text("status").notNull().default("pending"),
+  availableAt: text("available_at").notNull(),
+  lockedAt: text("locked_at"),
+  lockedBy: text("locked_by"),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+  createdAt: text("created_at").notNull(),
+  completedAt: text("completed_at"),
+}, (table) => [
+  check("outbox_jobs_status_check", sql`${table.status} IN ('pending','processing','complete','failed')`),
+  index("outbox_jobs_claim_idx").on(table.status, table.availableAt, table.id),
+  index("outbox_jobs_completed_idx").on(table.completedAt, table.id),
+]);
+
+export const memberActivityStats = sqliteTable("member_activity_stats", {
+  userId: integer("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  attendanceCount: integer("attendance_count").notNull().default(0),
+  postCount: integer("post_count").notNull().default(0),
+  commentCount: integer("comment_count").notNull().default(0),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const postStats = sqliteTable("post_stats", {
+  postId: integer("post_id").primaryKey().references(() => posts.id, { onDelete: "cascade" }),
+  commentCount: integer("comment_count").notNull().default(0),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const supportStats = sqliteTable("support_stats", {
+  inquiryId: integer("inquiry_id").primaryKey().references(() => supportInquiries.id, { onDelete: "cascade" }),
+  replyCount: integer("reply_count").notNull().default(0),
+  updatedAt: text("updated_at").notNull(),
+});

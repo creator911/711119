@@ -18,8 +18,25 @@ function migrationFiles(migrationsDir) {
     .sort((left, right) => left.localeCompare(right, "en"));
 }
 
-function checksum(contents) {
+function rawChecksum(contents) {
   return createHash("sha256").update(contents).digest("hex");
+}
+
+function normalizedMigration(contents) {
+  return contents.replace(/\r\n?/g, "\n");
+}
+
+function checksum(contents) {
+  return rawChecksum(normalizedMigration(contents));
+}
+
+function compatibleChecksums(contents) {
+  const normalized = normalizedMigration(contents);
+  return new Set([
+    rawChecksum(contents),
+    rawChecksum(normalized),
+    rawChecksum(normalized.replace(/\n/g, "\r\n")),
+  ]);
 }
 
 export function applyMigrations(database, { migrationsDir = DEFAULT_MIGRATIONS_DIR } = {}) {
@@ -38,7 +55,7 @@ export function applyMigrations(database, { migrationsDir = DEFAULT_MIGRATIONS_D
     const contents = readFileSync(path.join(migrationsDir, name), "utf8");
     const digest = checksum(contents);
     if (applied.has(name)) {
-      if (applied.get(name) !== digest) throw new Error(`Applied migration has changed: ${name}`);
+      if (!compatibleChecksums(contents).has(applied.get(name))) throw new Error(`Applied migration has changed: ${name}`);
       continue;
     }
     pending.push({ name, digest, statements: splitMigrationStatements(contents) });
@@ -72,13 +89,43 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-  const databasePath = productionDatabasePath();
-  mkdirSync(path.dirname(databasePath), { recursive: true });
-  const database = openD1Database(databasePath);
-  try {
-    const migrated = applyMigrations(database);
-    console.log(`Applied ${migrated.applied.length} migration(s) to ${databasePath}`);
-  } finally {
-    database.close();
+  if ((process.env.NARA_DATABASE_DRIVER || "sqlite").toLowerCase() === "postgres") {
+    const { openPostgresD1Database } = await import("./d1-postgres.mjs");
+    const database = openPostgresD1Database(process.env.DATABASE_URL, {
+      max: 2,
+      applicationName: "nara001-schema-check",
+    });
+    try {
+      const required = ["users", "posts", "post_comments", "outbox_jobs", "member_activity_stats", "post_stats", "support_stats", "nara_schema_migrations"];
+      const rows = await database.prepare(`
+        SELECT table_name AS name FROM information_schema.tables
+        WHERE table_schema=current_schema()
+      `).all();
+      const available = new Set(rows.results.map((row) => row.name));
+      const missing = required.filter((table) => !available.has(table));
+      if (missing.length) {
+        throw new Error(`PostgreSQL schema is incomplete (${missing.join(", ")}). Run npm run db:copy:postgres during the migration window.`);
+      }
+      const expectedMigrations = migrationFiles(DEFAULT_MIGRATIONS_DIR);
+      const applied = await database.prepare("SELECT name FROM nara_schema_migrations ORDER BY name").all();
+      const appliedNames = new Set(applied.results.map((row) => row.name));
+      const missingMigrations = expectedMigrations.filter((name) => !appliedNames.has(name));
+      if (missingMigrations.length) {
+        throw new Error(`PostgreSQL migrations are outdated (${missingMigrations.length} missing). Rehearse and apply an expand migration before activation.`);
+      }
+      console.log(`PostgreSQL schema check passed (${available.size} tables)`);
+    } finally {
+      await database.close();
+    }
+  } else {
+    const databasePath = productionDatabasePath();
+    mkdirSync(path.dirname(databasePath), { recursive: true });
+    const database = openD1Database(databasePath);
+    try {
+      const migrated = applyMigrations(database);
+      console.log(`Applied ${migrated.applied.length} migration(s) to ${databasePath}`);
+    } finally {
+      database.close();
+    }
   }
 }

@@ -4,6 +4,8 @@ const encoder = new TextEncoder();
 
 type AdminEnvironment = {
   ADMIN_SESSION_SECRET?: string;
+  APP_SURFACE?: string;
+  ADMIN_ALLOWED_HOSTS?: string;
   DB?: {
     prepare: (query: string) => {
       bind: (...values: unknown[]) => { first: <T>() => Promise<T | null> };
@@ -38,8 +40,14 @@ async function signature(secret: string, value: string) {
 
 export function adminConfiguration(environment: unknown, request: Request) {
   const values = environment as AdminEnvironment;
+  if (values.APP_SURFACE === "public") return null;
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  const allowedHosts = String(values.ADMIN_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  if (allowedHosts.length && !allowedHosts.includes(hostname)) return null;
   if (values.ADMIN_SESSION_SECRET) return { secret: values.ADMIN_SESSION_SECRET };
-  const hostname = new URL(request.url).hostname;
   if (hostname === "localhost" || hostname === "127.0.0.1") return { secret: "local-admin-session-secret" };
   return null;
 }

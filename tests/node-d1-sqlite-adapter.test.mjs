@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -79,24 +80,55 @@ test("all Drizzle migrations apply once and preserve trigger statements", () => 
   try {
     assert.deepEqual(splitMigrationStatements("SELECT 1;--> statement-breakpoint\r\nSELECT 2;"), ["SELECT 1;", "SELECT 2;"]);
     const first = applyMigrations(fixture.database);
-    assert.equal(first.applied.length, 34);
+    assert.equal(first.applied.length, 47);
     assert.deepEqual(applyMigrations(fixture.database), { applied: [] });
 
-    assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM _node_migrations")[0].count, 34);
+    assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM _node_migrations")[0].count, 47);
     assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='system_announcements'")[0].count, 1);
     assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='system_announcement_receipts'")[0].count, 1);
     assert.ok(fixture.database._allSync("PRAGMA table_info(users)").some(({ name }) => name === "level_locked"));
     assert.deepEqual(fixture.database._allSync("SELECT username FROM admin_owners ORDER BY username"), []);
     assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM featured_vendor_posts")[0].count, 4);
     assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM shop_products")[0].count, 10);
+    assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='shop_voucher_cleanup_queue'")[0].count, 1);
     assert.ok(fixture.database._allSync("PRAGMA table_info(shop_products)").some(({ name }) => name === "min_level"));
     assert.equal(fixture.database._allSync("SELECT value FROM site_settings WHERE key='main_domain'")[0].value, "https://nara001.co.kr");
     assert.equal(
       fixture.database._allSync("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='trigger' AND name='shop_purchase_apply_after_insert'")[0].count,
       1,
     );
+    assert.equal(fixture.database._allSync("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='trigger' AND name LIKE 'event_activity_%'")[0].count, 9);
   } finally {
     fixture.dispose();
+  }
+});
+
+test("migration checksums ignore line-ending conversion but reject SQL changes", () => {
+  const fixture = temporaryDatabase();
+  const migrationsDir = mkdtempSync(path.join(tmpdir(), "nara-migration-lines-"));
+  const migrationPath = path.join(migrationsDir, "0000_line_endings.sql");
+  try {
+    writeFileSync(migrationPath, "CREATE TABLE line_endings(id INTEGER PRIMARY KEY);\r\n");
+    assert.deepEqual(applyMigrations(fixture.database, { migrationsDir }).applied, ["0000_line_endings.sql"]);
+
+    const legacyChecksum = createHash("sha256")
+      .update("CREATE TABLE line_endings(id INTEGER PRIMARY KEY);\r\n")
+      .digest("hex");
+    writeFileSync(migrationPath, "CREATE TABLE line_endings(id INTEGER PRIMARY KEY);\n");
+    fixture.database._runSync(
+      "UPDATE _node_migrations SET checksum=? WHERE name='0000_line_endings.sql'",
+      [legacyChecksum],
+    );
+    assert.deepEqual(applyMigrations(fixture.database, { migrationsDir }), { applied: [] });
+
+    writeFileSync(migrationPath, "CREATE TABLE line_endings(id INTEGER PRIMARY KEY, changed INTEGER);\n");
+    assert.throws(
+      () => applyMigrations(fixture.database, { migrationsDir }),
+      /Applied migration has changed: 0000_line_endings\.sql/,
+    );
+  } finally {
+    fixture.dispose();
+    rmSync(migrationsDir, { recursive: true, force: true });
   }
 });
 

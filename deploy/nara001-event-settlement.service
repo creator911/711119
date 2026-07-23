@@ -1,0 +1,16 @@
+[Unit]
+Description=Nara001 event leaderboard refresh and reward settlement
+After=network-online.target nara001.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nara001
+Group=nara001
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 30 --output /dev/null http://127.0.0.1:3000/api/events/leaderboard?period=weekly
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 30 --output /dev/null http://127.0.0.1:3000/api/events/leaderboard?period=monthly
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

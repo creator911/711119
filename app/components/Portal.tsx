@@ -9,14 +9,14 @@ import RichTextEditor from "./RichTextEditor";
 import ShopPage from "./ShopPage";
 import SupportReplyComposer from "./SupportReplyComposer";
 import { visiblePageNumbers } from "../lib/board-pagination";
-import { getSampleBoardPosts } from "../lib/board-sample-posts";
 import { comparePopularPosts, isInPopularWindow, postCreatedTime } from "../lib/popular-posts";
 import { renderRichBody, renderRichTitle, stripRichTitle } from "../lib/rich-text";
 import { horizontalScrollAvailability, horizontalScrollTarget } from "../lib/horizontal-scroll";
 import { vendorCategories, vendorRegionGroups as regionGroups, writableVendorCategories } from "../lib/vendor-regions";
 import { COMMUNITY_TAGS, isCommunityBoardCategory, type CommunityTag } from "../lib/community-tags";
-import { TITLE_COLOR_OPTIONS, type TitleColor } from "../lib/title-colors";
+import { type TitleColor } from "../lib/title-colors";
 import { attendancePointsForLevel } from "../lib/member-level";
+import { publishMemberSession } from "../lib/member-session-client";
 
 type View = "home" | "notices" | "vendors" | "community" | "reviews" | "events" | "partner" | "support" | "mypage" | "shop";
 type BoardKind = "notices" | "reviews" | "events" | "gifs" | "community";
@@ -83,14 +83,15 @@ type MyPageData = {
   posts: MyPagePost[];
   pointHistory: PointHistory[];
 };
-type SupportInquiry = {
+  type SupportInquiry = {
   id: number;
   title: string;
-  body: string;
+  body?: string;
   status: "open" | "answered" | "closed";
   memberUnread: number;
   author: string;
-  replyCount: number;
+    replyCount: number;
+    latestReplyId?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -120,11 +121,28 @@ type VendorTextPost = {
   createdAt: string;
   updatedAt: string;
 };
-const boardPosts = (kind: BoardKind): BoardDisplayPost[] => getSampleBoardPosts(kind === "gifs" ? "community" : kind).map((post) => ({
-  ...post,
+const livePostToBoardDisplayPost = (post: LivePost): BoardDisplayPost => ({
+  id: post.id,
+  title: post.title,
+  titleColor: post.titleColor || "",
+  body: post.body,
+  communityTags: post.communityTags,
+  author: post.author,
+  authorLevel: post.authorLevel,
   time: formatPostTime(post.createdAt),
-  live: false,
-}));
+  views: post.views,
+  likes: post.likes,
+  dislikes: post.dislikes ?? 0,
+  reportCount: post.reportCount ?? 0,
+  isNotice: Boolean(post.isNotice),
+  isPinned: Boolean(post.isPinned),
+  commentCount: post.commentCount ?? 0,
+  isOwn: post.isOwn,
+  canEdit: post.canEdit,
+  canDelete: post.canDelete,
+  createdAt: post.createdAt,
+  live: true,
+});
 
 const navItems: { key: View; label: string }[] = [
   { key: "home", label: "홈" },
@@ -163,27 +181,101 @@ export default function Portal() {
   const [myPageLoading, setMyPageLoading] = useState(false);
   const [supportInquiries, setSupportInquiries] = useState<SupportInquiry[]>([]);
   const [selectedInquiry, setSelectedInquiry] = useState<SupportInquiry | null>(null);
+  const [supportLoadedInquiryId, setSupportLoadedInquiryId] = useState<number | null>(null);
   const [supportReplies, setSupportReplies] = useState<SupportReply[]>([]);
+  const [supportReplyCursor, setSupportReplyCursor] = useState<number | null>(null);
+  const [supportReplyLoadingMore, setSupportReplyLoadingMore] = useState(false);
   const [supportWriting, setSupportWriting] = useState(false);
   const [supportLoading, setSupportLoading] = useState(false);
+  const [supportDetailLoading, setSupportDetailLoading] = useState(false);
   const [supportSubmitting, setSupportSubmitting] = useState(false);
+  const [supportPage, setSupportPage] = useState(1);
+  const [supportTotalPages, setSupportTotalPages] = useState(1);
   const featuredRequestRef = useRef(0);
+  const supportListSequenceRef = useRef(0);
+  const supportDetailSequenceRef = useRef(0);
+  const supportListAbortRef = useRef<AbortController | null>(null);
+  const supportDetailAbortRef = useRef<AbortController | null>(null);
+  const supportReplyPageAbortRef = useRef<AbortController | null>(null);
+  const supportReplyPageSequenceRef = useRef(0);
+  const supportViewedAbortRef = useRef<AbortController | null>(null);
+  const supportViewedSequenceRef = useRef(0);
+  const supportMutationAbortRef = useRef<AbortController | null>(null);
+  const supportSessionSequenceRef = useRef(0);
+  const selectedInquiryIdRef = useRef<number | null>(null);
+  const activeInquiryKindRef = useRef<InquiryKind>("support");
+  const supportPageRef = useRef(supportPage);
+  const supportViewerRef = useRef<string | null>(null);
+  const viewRef = useRef<View>(view);
   const viewerNickname = viewer?.nickname;
   const activeInquiryKind: InquiryKind = view === "partner" ? "partner" : "support";
+
+  const resetSupportReplyPagination = useCallback(() => {
+    supportReplyPageSequenceRef.current += 1;
+    supportReplyPageAbortRef.current?.abort();
+    supportReplyPageAbortRef.current = null;
+    setSupportReplyCursor(null);
+    setSupportReplyLoadingMore(false);
+  }, []);
+
+  const resetSupportState = useCallback(() => {
+    supportSessionSequenceRef.current += 1;
+    supportListSequenceRef.current += 1;
+    supportDetailSequenceRef.current += 1;
+    supportViewedSequenceRef.current += 1;
+    supportListAbortRef.current?.abort();
+    supportDetailAbortRef.current?.abort();
+    supportReplyPageAbortRef.current?.abort();
+    supportViewedAbortRef.current?.abort();
+    supportMutationAbortRef.current?.abort();
+    supportListAbortRef.current = null;
+    supportDetailAbortRef.current = null;
+    supportReplyPageAbortRef.current = null;
+    supportViewedAbortRef.current = null;
+    supportMutationAbortRef.current = null;
+    selectedInquiryIdRef.current = null;
+    setSupportInquiries([]);
+    setSelectedInquiry(null);
+    setSupportLoadedInquiryId(null);
+    setSupportReplies([]);
+    resetSupportReplyPagination();
+    setSupportWriting(false);
+    setSupportLoading(false);
+    setSupportDetailLoading(false);
+    setSupportSubmitting(false);
+    supportPageRef.current = 1;
+    setSupportPage(1);
+    setSupportTotalPages(1);
+  }, [resetSupportReplyPagination]);
+
+  useEffect(() => { supportPageRef.current = supportPage; }, [supportPage]);
+  useEffect(() => { viewRef.current = view; }, [view]);
 
   useEffect(() => {
     const now = new Date();
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     fetch(`/api/attendance?month=${month}`, { cache: "no-store" })
-      .then((response) => response.json())
-      .then((result: { user?: Viewer | null }) => {
+      .then((response) => response.json() as Promise<{ user?: Viewer | null }>)
+      .then((result) => {
         setPoints(result.user?.points ?? 0);
         setAttended(result.user?.attended ?? false);
         setViewer(result.user ?? null);
-        window.dispatchEvent(new CustomEvent("cn:member-session", { detail: { authenticated: Boolean(result.user) } }));
+        publishMemberSession(Boolean(result.user), result.user?.level);
       })
-      .catch(() => { setPoints(0); setAttended(false); setViewer(null); });
+      .catch(() => {
+        setPoints(0);
+        setAttended(false);
+        setViewer(null);
+        publishMemberSession(false);
+      });
   }, []);
+
+  useEffect(() => {
+    const nextViewer = viewerNickname ?? null;
+    if (supportViewerRef.current === nextViewer) return;
+    supportViewerRef.current = nextViewer;
+    resetSupportState();
+  }, [resetSupportState, viewerNickname]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -220,6 +312,7 @@ export default function Portal() {
   }, []);
 
   const handleLevelSessionExpired = useCallback(() => {
+    resetSupportState();
     setLevelProgressOpen(false);
     setViewer(null);
     setPoints(0);
@@ -227,7 +320,7 @@ export default function Portal() {
     setMyPage(null);
     setModal("login");
     showToast("로그인이 만료되었습니다. 다시 로그인해 주세요.");
-  }, [showToast]);
+  }, [resetSupportState, showToast]);
 
   const loadFeaturedVendors = useCallback(async () => {
     const requestId = ++featuredRequestRef.current;
@@ -273,9 +366,15 @@ export default function Portal() {
   }, [showToast]);
 
   useEffect(() => {
-    if (!(["notices", "reviews", "events", "community"] as View[]).includes(view)) return;
-    const kind = view as BoardKind;
-    const timer = window.setTimeout(() => void loadPosts(kind), 0);
+    const kinds: BoardKind[] = view === "home"
+      ? ["reviews", "community"]
+      : (["notices", "reviews", "events", "community"] as View[]).includes(view)
+        ? [view as BoardKind]
+        : [];
+    if (!kinds.length) return;
+    const timer = window.setTimeout(() => {
+      for (const kind of kinds) void loadPosts(kind);
+    }, 0);
     return () => window.clearTimeout(timer);
   }, [loadPosts, view]);
 
@@ -298,27 +397,68 @@ export default function Portal() {
     return () => { active = false; };
   }, [showToast, view, viewerNickname]);
 
-  const loadSupport = useCallback(async () => {
-    if (!viewer) return;
-    setSupportLoading(true);
+  useEffect(() => { activeInquiryKindRef.current = activeInquiryKind; }, [activeInquiryKind]);
+
+  const loadSupport = useCallback(async (kind: InquiryKind, page: number, quiet = false) => {
+    if (!viewerNickname) return false;
+    const session = supportSessionSequenceRef.current;
+    const sequence = ++supportListSequenceRef.current;
+    supportListAbortRef.current?.abort();
+    const controller = new AbortController();
+    supportListAbortRef.current = controller;
+    if (!quiet) setSupportLoading(true);
     try {
-      const response = await fetch(`/api/support?kind=${activeInquiryKind}`, { cache: "no-store" });
-      const result = await response.json() as { inquiries?: SupportInquiry[]; error?: string };
+      const search = new URLSearchParams({ kind, page: String(page) });
+      const response = await fetch(`/api/support?${search.toString()}`, { cache: "no-store", signal: controller.signal });
+      const result = await response.json() as { inquiries?: SupportInquiry[]; page?: number; totalPages?: number; error?: string };
+      if (response.status === 401 && session === supportSessionSequenceRef.current) {
+        handleLevelSessionExpired();
+        return false;
+      }
       if (!response.ok) throw new Error(result.error ?? "문의 목록을 불러오지 못했습니다.");
+      if (session !== supportSessionSequenceRef.current || sequence !== supportListSequenceRef.current || activeInquiryKindRef.current !== kind) return false;
       setSupportInquiries(result.inquiries ?? []);
+      const resolvedPage = Math.max(1, Number(result.page ?? page));
+      setSupportTotalPages(Math.max(1, Number(result.totalPages ?? 1)));
+      if (resolvedPage !== page) setSupportPage(resolvedPage);
+      return true;
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "문의 목록을 불러오지 못했습니다.");
+      if (!(error instanceof DOMException && error.name === "AbortError") && sequence === supportListSequenceRef.current && !quiet) {
+        showToast(error instanceof Error ? error.message : "문의 목록을 불러오지 못했습니다.");
+      }
+      return false;
     } finally {
-      setSupportLoading(false);
+      if (sequence === supportListSequenceRef.current) {
+        if (supportListAbortRef.current === controller) supportListAbortRef.current = null;
+        setSupportLoading(false);
+      }
     }
-  }, [activeInquiryKind, showToast, viewer]);
+  }, [handleLevelSessionExpired, showToast, viewerNickname]);
 
   useEffect(() => {
     if (view !== "support" && view !== "partner") return;
-    if (!viewer) return;
-    const timer = window.setTimeout(() => void loadSupport(), 0);
-    return () => window.clearTimeout(timer);
-  }, [loadSupport, view, viewer]);
+    if (!viewerNickname) return;
+    const kind = view === "partner" ? "partner" : "support";
+    const timer = window.setTimeout(() => void loadSupport(kind, supportPage), 0);
+    return () => {
+      window.clearTimeout(timer);
+      supportListSequenceRef.current += 1;
+      supportListAbortRef.current?.abort();
+    };
+  }, [loadSupport, supportPage, view, viewerNickname]);
+
+  useEffect(() => () => {
+    supportSessionSequenceRef.current += 1;
+    supportListSequenceRef.current += 1;
+    supportDetailSequenceRef.current += 1;
+    supportReplyPageSequenceRef.current += 1;
+    supportViewedSequenceRef.current += 1;
+    supportListAbortRef.current?.abort();
+    supportDetailAbortRef.current?.abort();
+    supportReplyPageAbortRef.current?.abort();
+    supportViewedAbortRef.current?.abort();
+    supportMutationAbortRef.current?.abort();
+  }, []);
 
   const selectRegion = (nextRegion: string, nextDistrict = "전체") => {
     setRegion(nextRegion);
@@ -326,19 +466,39 @@ export default function Portal() {
   };
 
   const go = (next: View) => {
+    const sameInquiryTab = (next === "support" || next === "partner") && view === next;
+    viewRef.current = next;
     if (next === "vendors") {
       setQuery("");
       setVendorSearch("");
       setVendorSearchRevision((current) => current + 1);
     }
+    if (next === "support" || next === "partner") activeInquiryKindRef.current = next === "partner" ? "partner" : "support";
     setView(next);
     setWriteKind(null);
     setSelectedPost(null);
     setSelectedFeaturedVendor(null);
     setSupportWriting(false);
+    selectedInquiryIdRef.current = null;
     setSelectedInquiry(null);
+    setSupportLoadedInquiryId(null);
     setSupportReplies([]);
-    if (next === "support" || next === "partner") setSupportInquiries([]);
+    resetSupportReplyPagination();
+    setSupportDetailLoading(false);
+    supportDetailSequenceRef.current += 1;
+    supportViewedSequenceRef.current += 1;
+    supportDetailAbortRef.current?.abort();
+    supportViewedAbortRef.current?.abort();
+    if (next === "support" || next === "partner") {
+      if (sameInquiryTab && supportPage === 1) {
+        void loadSupport(next, 1);
+      } else {
+        setSupportInquiries([]);
+        supportPageRef.current = 1;
+        setSupportPage(1);
+        setSupportTotalPages(1);
+      }
+    }
     window.history.replaceState(null, "", window.location.pathname);
     window.scrollTo({ top: 0, behavior: "auto" });
   };
@@ -411,8 +571,12 @@ export default function Portal() {
         setModal("login");
       } else {
         const nextViewer = result.user ?? { nickname: "회원", points: 0, level: 1, attended: false };
+        if (viewer?.nickname !== nextViewer.nickname) {
+          resetSupportState();
+          supportViewerRef.current = nextViewer.nickname;
+        }
         setViewer(nextViewer);
-        window.dispatchEvent(new CustomEvent("cn:member-session", { detail: { authenticated: true } }));
+        publishMemberSession(true, nextViewer.level);
         setPoints(nextViewer.points);
         setAttended(nextViewer.attended);
         showToast(`${nextViewer.nickname}님, 반가워요!`);
@@ -426,10 +590,11 @@ export default function Portal() {
   };
 
   const logout = async () => {
+    resetSupportState();
     try { await fetch("/api/auth/logout", { method: "POST" }); } finally {
       setLevelProgressOpen(false);
       setViewer(null);
-      window.dispatchEvent(new CustomEvent("cn:member-session", { detail: { authenticated: false } }));
+      publishMemberSession(false);
       setPoints(0);
       setAttended(false);
       setMyPage(null);
@@ -494,80 +659,264 @@ export default function Portal() {
     }
   };
 
+  const loadSupportInquiry = useCallback(async (id: number, kind: InquiryKind, quiet = false) => {
+    const session = supportSessionSequenceRef.current;
+    const sequence = ++supportDetailSequenceRef.current;
+    supportDetailAbortRef.current?.abort();
+    const controller = new AbortController();
+    supportDetailAbortRef.current = controller;
+    if (!quiet) setSupportDetailLoading(true);
+    try {
+      const response = await fetch(`/api/support/${id}?kind=${kind}`, { cache: "no-store", signal: controller.signal });
+      const result = await response.json() as { inquiry?: SupportInquiry; replies?: SupportReply[]; previousReplyCursor?: number | null; error?: string };
+      if (response.status === 401 && session === supportSessionSequenceRef.current) {
+        handleLevelSessionExpired();
+        return false;
+      }
+      if (!response.ok || !result.inquiry) throw new Error(result.error ?? "문의글을 불러오지 못했습니다.");
+      if (session !== supportSessionSequenceRef.current || sequence !== supportDetailSequenceRef.current || activeInquiryKindRef.current !== kind || selectedInquiryIdRef.current !== id) return false;
+      const nextReplies = result.replies ?? [];
+      setSelectedInquiry(result.inquiry);
+      setSupportLoadedInquiryId(id);
+      if (quiet) {
+        setSupportReplies((current) => {
+          const repliesById = new Map(current.map((reply) => [reply.id, reply]));
+          for (const reply of nextReplies) repliesById.set(reply.id, reply);
+          return [...repliesById.values()].sort((left, right) => left.id - right.id);
+        });
+      } else {
+        setSupportReplies(nextReplies);
+        resetSupportReplyPagination();
+        setSupportReplyCursor(result.previousReplyCursor ?? null);
+      }
+      setSupportInquiries((current) => current.map((item) => item.id === id ? { ...item, status: result.inquiry!.status, replyCount: result.inquiry!.replyCount, updatedAt: result.inquiry!.updatedAt } : item));
+      return true;
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError") && sequence === supportDetailSequenceRef.current && selectedInquiryIdRef.current === id && !quiet) {
+        selectedInquiryIdRef.current = null;
+        setSelectedInquiry(null);
+        setSupportLoadedInquiryId(null);
+        setSupportReplies([]);
+        resetSupportReplyPagination();
+        showToast(error instanceof Error ? error.message : "문의글을 불러오지 못했습니다.");
+      }
+      return false;
+    } finally {
+      if (sequence === supportDetailSequenceRef.current) {
+        if (supportDetailAbortRef.current === controller) supportDetailAbortRef.current = null;
+        setSupportDetailLoading(false);
+      }
+    }
+  }, [handleLevelSessionExpired, resetSupportReplyPagination, showToast]);
+
+  const loadOlderSupportReplies = async () => {
+    const id = selectedInquiryIdRef.current;
+    const cursor = supportReplyCursor;
+    if (!id || !cursor || supportReplyLoadingMore) return;
+    const kind = activeInquiryKindRef.current;
+    const session = supportSessionSequenceRef.current;
+    const sequence = ++supportReplyPageSequenceRef.current;
+    supportReplyPageAbortRef.current?.abort();
+    const controller = new AbortController();
+    supportReplyPageAbortRef.current = controller;
+    setSupportReplyLoadingMore(true);
+    try {
+      const search = new URLSearchParams({ kind, beforeReplyId: String(cursor) });
+      const response = await fetch(`/api/support/${id}?${search.toString()}`, { cache: "no-store", signal: controller.signal });
+      const result = await response.json() as { replies?: SupportReply[]; previousReplyCursor?: number | null; error?: string };
+      if (response.status === 401 && session === supportSessionSequenceRef.current) {
+        handleLevelSessionExpired();
+        return;
+      }
+      if (!response.ok) throw new Error(result.error ?? "이전 답변을 불러오지 못했습니다.");
+      if (session !== supportSessionSequenceRef.current || sequence !== supportReplyPageSequenceRef.current || selectedInquiryIdRef.current !== id || activeInquiryKindRef.current !== kind) return;
+      setSupportReplies((current) => {
+        const currentIds = new Set(current.map((reply) => reply.id));
+        return [...(result.replies ?? []).filter((reply) => !currentIds.has(reply.id)), ...current];
+      });
+      setSupportReplyCursor(result.previousReplyCursor ?? null);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError") && session === supportSessionSequenceRef.current && sequence === supportReplyPageSequenceRef.current && selectedInquiryIdRef.current === id) {
+        showToast(error instanceof Error ? error.message : "이전 답변을 불러오지 못했습니다.");
+      }
+    } finally {
+      if (sequence === supportReplyPageSequenceRef.current) {
+        if (supportReplyPageAbortRef.current === controller) supportReplyPageAbortRef.current = null;
+        setSupportReplyLoadingMore(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const id = supportLoadedInquiryId;
+    if (!viewerNickname || !id || selectedInquiry?.id !== id || selectedInquiry.memberUnread <= 0 || !Number.isSafeInteger(selectedInquiry.latestReplyId) || selectedInquiryIdRef.current !== id) return;
+    const requestKind = activeInquiryKind;
+    const session = supportSessionSequenceRef.current;
+    const sequence = ++supportViewedSequenceRef.current;
+    supportViewedAbortRef.current?.abort();
+    const controller = new AbortController();
+    supportViewedAbortRef.current = controller;
+    const frame = window.requestAnimationFrame(() => {
+      void (async () => {
+        try {
+          const response = await fetch(`/api/support/${id}?kind=${requestKind}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ viewed: true, viewedThroughReplyId: selectedInquiry.latestReplyId }),
+            signal: controller.signal,
+          });
+          const result = await response.json() as { viewed?: boolean; error?: string };
+          if (response.status === 401 && session === supportSessionSequenceRef.current) {
+            handleLevelSessionExpired();
+            return;
+          }
+          if (!response.ok) throw new Error(result.error ?? "문의 확인 상태를 저장하지 못했습니다.");
+          if (session !== supportSessionSequenceRef.current || sequence !== supportViewedSequenceRef.current || activeInquiryKindRef.current !== requestKind || selectedInquiryIdRef.current !== id) return;
+          if (result.viewed !== true) {
+            void loadSupportInquiry(id, requestKind, true);
+            return;
+          }
+          setSupportInquiries((current) => current.map((item) => item.id === id ? { ...item, memberUnread: 0 } : item));
+          setSelectedInquiry((current) => current?.id === id ? { ...current, memberUnread: 0 } : current);
+        } catch (error) {
+          if (!(error instanceof DOMException && error.name === "AbortError") && session === supportSessionSequenceRef.current && sequence === supportViewedSequenceRef.current && selectedInquiryIdRef.current === id) {
+            showToast(error instanceof Error ? error.message : "문의 확인 상태를 저장하지 못했습니다.");
+          }
+        } finally {
+          if (sequence === supportViewedSequenceRef.current && supportViewedAbortRef.current === controller) supportViewedAbortRef.current = null;
+        }
+      })();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (supportViewedAbortRef.current === controller) supportViewedAbortRef.current = null;
+      controller.abort();
+    };
+  }, [activeInquiryKind, handleLevelSessionExpired, loadSupportInquiry, selectedInquiry?.id, selectedInquiry?.latestReplyId, selectedInquiry?.memberUnread, showToast, supportLoadedInquiryId, viewerNickname]);
+
   const openSupportWrite = () => {
     if (!viewer) {
       setModal("login");
       showToast("로그인 후 1:1문의를 작성할 수 있습니다.");
       return;
     }
+    selectedInquiryIdRef.current = null;
     setSelectedInquiry(null);
+    setSupportLoadedInquiryId(null);
+    setSupportReplies([]);
+    resetSupportReplyPagination();
+    setSupportDetailLoading(false);
+    supportDetailSequenceRef.current += 1;
+    supportViewedSequenceRef.current += 1;
+    supportDetailAbortRef.current?.abort();
+    supportViewedAbortRef.current?.abort();
     setSupportWriting(true);
   };
 
   const submitSupport = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (supportSubmitting) return;
+    const requestKind = activeInquiryKind;
+    const session = supportSessionSequenceRef.current;
     const form = new FormData(event.currentTarget);
+    supportMutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    supportMutationAbortRef.current = controller;
     setSupportSubmitting(true);
     try {
-      const response = await fetch(`/api/support?kind=${activeInquiryKind}`, {
+      const response = await fetch(`/api/support?kind=${requestKind}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: form.get("title"), body: form.get("body") }),
+        signal: controller.signal,
       });
       const result = await response.json() as { inquiry?: SupportInquiry; error?: string };
+      if (response.status === 401 && session === supportSessionSequenceRef.current) {
+        handleLevelSessionExpired();
+        return;
+      }
       if (!response.ok || !result.inquiry) throw new Error(result.error ?? "문의글을 저장하지 못했습니다.");
+      if (session !== supportSessionSequenceRef.current || activeInquiryKindRef.current !== requestKind) return;
+      selectedInquiryIdRef.current = result.inquiry.id;
       setSupportInquiries((current) => [result.inquiry!, ...current]);
       setSelectedInquiry(result.inquiry);
+      setSupportLoadedInquiryId(result.inquiry.id);
       setSupportReplies([]);
+      resetSupportReplyPagination();
+      supportPageRef.current = 1;
+      setSupportPage(1);
       setSupportWriting(false);
+      void loadSupport(requestKind, 1, true);
       showToast("1:1문의가 접수되었습니다.");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "문의글을 저장하지 못했습니다.");
+      if (!(error instanceof DOMException && error.name === "AbortError") && session === supportSessionSequenceRef.current) {
+        showToast(error instanceof Error ? error.message : "문의글을 저장하지 못했습니다.");
+      }
     } finally {
-      setSupportSubmitting(false);
+      if (supportMutationAbortRef.current === controller) supportMutationAbortRef.current = null;
+      if (session === supportSessionSequenceRef.current) setSupportSubmitting(false);
     }
   };
 
-  const openInquiry = async (inquiry: SupportInquiry) => {
-    if (!viewer || supportLoading) return;
+  const openInquiry = (inquiry: SupportInquiry) => {
+    if (!viewer) return;
     setSupportWriting(false);
+    selectedInquiryIdRef.current = inquiry.id;
     setSelectedInquiry(inquiry);
-    setSupportLoading(true);
-    try {
-      const response = await fetch(`/api/support/${inquiry.id}?kind=${activeInquiryKind}`, { cache: "no-store" });
-      const result = await response.json() as { inquiry?: SupportInquiry; replies?: SupportReply[]; error?: string };
-      if (!response.ok || !result.inquiry) throw new Error(result.error ?? "문의글을 불러오지 못했습니다.");
-      setSelectedInquiry(result.inquiry);
-      setSupportReplies(result.replies ?? []);
-      setSupportInquiries((current) => current.map((item) => item.id === inquiry.id ? { ...item, memberUnread: 0, status: result.inquiry!.status, replyCount: result.replies?.length ?? item.replyCount } : item));
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "문의글을 불러오지 못했습니다.");
-    } finally {
-      setSupportLoading(false);
-    }
+    setSupportLoadedInquiryId(null);
+    setSupportReplies([]);
+    resetSupportReplyPagination();
+    supportViewedSequenceRef.current += 1;
+    supportViewedAbortRef.current?.abort();
+    void loadSupportInquiry(inquiry.id, activeInquiryKind);
   };
 
   const submitSupportReply = async (body: string): Promise<boolean> => {
-    if (!selectedInquiry || supportSubmitting) return false;
+    const targetId = selectedInquiryIdRef.current;
+    const targetKind = activeInquiryKind;
+    if (!targetId || !selectedInquiry || selectedInquiry.id !== targetId || supportSubmitting || supportDetailLoading) return false;
+    const session = supportSessionSequenceRef.current;
+    supportMutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    supportMutationAbortRef.current = controller;
     setSupportSubmitting(true);
     try {
-      const response = await fetch(`/api/support/${selectedInquiry.id}?kind=${activeInquiryKind}`, {
+      const response = await fetch(`/api/support/${targetId}?kind=${targetKind}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body }),
+        signal: controller.signal,
       });
       const result = await response.json() as SupportReply & { error?: string };
+      if (response.status === 401 && session === supportSessionSequenceRef.current) {
+        handleLevelSessionExpired();
+        return false;
+      }
       if (!response.ok) throw new Error(result.error ?? "댓글을 저장하지 못했습니다.");
-      setSupportReplies((current) => [...current, result]);
-      setSupportInquiries((current) => current.map((item) => item.id === selectedInquiry.id ? { ...item, status: "open", replyCount: item.replyCount + 1, updatedAt: result.createdAt } : item));
+      if (session !== supportSessionSequenceRef.current) return true;
+      const stillInTargetBoard = viewRef.current === targetKind && activeInquiryKindRef.current === targetKind;
+      if (stillInTargetBoard) setSupportInquiries((current) => current.map((item) => item.id === targetId ? { ...item, status: "open", replyCount: item.replyCount + 1, updatedAt: result.createdAt } : item));
+      if (stillInTargetBoard && selectedInquiryIdRef.current === targetId) {
+        setSupportReplies((current) => [...current, result]);
+        setSelectedInquiry((current) => current?.id === targetId ? { ...current, status: "open", replyCount: current.replyCount + 1, updatedAt: result.createdAt } : current);
+      }
+      if (stillInTargetBoard) {
+        const refreshPage = supportPageRef.current;
+        await Promise.all([
+          loadSupport(targetKind, refreshPage, true),
+          selectedInquiryIdRef.current === targetId ? loadSupportInquiry(targetId, targetKind, true) : Promise.resolve(false),
+        ]);
+      }
       showToast("댓글이 등록되었습니다.");
       return true;
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "댓글을 저장하지 못했습니다.");
+      if (!(error instanceof DOMException && error.name === "AbortError") && session === supportSessionSequenceRef.current) {
+        showToast(error instanceof Error ? error.message : "댓글을 저장하지 못했습니다.");
+      }
       return false;
     } finally {
-      setSupportSubmitting(false);
+      if (supportMutationAbortRef.current === controller) supportMutationAbortRef.current = null;
+      if (session === supportSessionSequenceRef.current) setSupportSubmitting(false);
     }
   };
 
@@ -641,8 +990,8 @@ export default function Portal() {
             <VendorSection posts={featuredVendors} loading={featuredLoading} onOpen={openFeaturedVendor} onMore={() => go("vendors")} />
 
             <section className="board-grid page-width">
-              <BoardPreview kind="reviews" title="실시간 후기" posts={boardPosts("reviews").slice(0, 5)} onMore={() => go("reviews")} />
-              <BoardPreview kind="community" title="커뮤니티" posts={boardPosts("community").slice(0, 5)} onMore={() => go("community")} />
+              <BoardPreview kind="reviews" title="실시간 후기" posts={(livePosts.reviews ?? []).slice(0, 5).map(livePostToBoardDisplayPost)} onMore={() => go("reviews")} />
+              <BoardPreview kind="community" title="커뮤니티" posts={(livePosts.community ?? []).slice(0, 5).map(livePostToBoardDisplayPost)} onMore={() => go("community")} />
             </section>
 
             <section className="editorial page-width">
@@ -680,7 +1029,7 @@ export default function Portal() {
           <ShopPage
             viewer={viewer ? { points, level: viewer.level } : null}
             onLoginRequired={() => { setModal("login"); showToast("로그인 후 포인트 상점을 이용할 수 있습니다."); }}
-            onSessionExpired={() => { setViewer(null); setPoints(0); setAttended(false); setMyPage(null); setModal("login"); showToast("로그인이 만료되었습니다. 다시 로그인해 주세요."); }}
+            onSessionExpired={() => { resetSupportState(); setViewer(null); setPoints(0); setAttended(false); setMyPage(null); setModal("login"); showToast("로그인이 만료되었습니다. 다시 로그인해 주세요."); }}
             onPointsChange={(nextPoints) => { setPoints(nextPoints); setViewer((current) => current ? { ...current, points: nextPoints } : current); setMyPage(null); }}
             showToast={showToast}
           />
@@ -690,17 +1039,49 @@ export default function Portal() {
             inquiries={supportInquiries}
             selectedInquiry={selectedInquiry}
             replies={supportReplies}
+            hasOlderReplies={Boolean(supportReplyCursor)}
+            loadingOlderReplies={supportReplyLoadingMore}
             writing={supportWriting}
             loading={supportLoading}
+            detailLoading={supportDetailLoading}
             submitting={supportSubmitting}
+            page={supportPage}
+            totalPages={supportTotalPages}
             loggedIn={Boolean(viewer)}
             onWrite={openSupportWrite}
             onCancelWrite={() => setSupportWriting(false)}
             onSubmit={submitSupport}
-            onOpen={(inquiry) => void openInquiry(inquiry)}
-            onCloseDetail={() => { setSelectedInquiry(null); setSupportReplies([]); }}
+            onOpen={openInquiry}
+            onCloseDetail={() => {
+              selectedInquiryIdRef.current = null;
+              setSelectedInquiry(null);
+              setSupportLoadedInquiryId(null);
+              setSupportReplies([]);
+              resetSupportReplyPagination();
+              setSupportDetailLoading(false);
+              supportDetailSequenceRef.current += 1;
+              supportViewedSequenceRef.current += 1;
+              supportDetailAbortRef.current?.abort();
+              supportViewedAbortRef.current?.abort();
+            }}
+            onPageChange={(nextPage) => {
+              if (supportLoading || nextPage < 1 || nextPage > supportTotalPages || nextPage === supportPage) return;
+              selectedInquiryIdRef.current = null;
+              setSelectedInquiry(null);
+              setSupportLoadedInquiryId(null);
+              setSupportReplies([]);
+              resetSupportReplyPagination();
+              setSupportDetailLoading(false);
+              supportDetailSequenceRef.current += 1;
+              supportViewedSequenceRef.current += 1;
+              supportDetailAbortRef.current?.abort();
+              supportViewedAbortRef.current?.abort();
+              supportPageRef.current = nextPage;
+              setSupportPage(nextPage);
+            }}
             onLoginRequired={() => setModal("login")}
             onReply={submitSupportReply}
+            onLoadOlderReplies={loadOlderSupportReplies}
           />
         ) : view === "mypage" ? (
           <MyPage key={viewerNickname || "guest"} data={myPage} loading={myPageLoading} onOpenPost={openMyPost} onOpenShop={openShop} loggedIn={Boolean(viewer)} />
@@ -862,42 +1243,50 @@ function MyPage({ data, loading, loggedIn, onOpenPost, onOpenShop }: {
   </section>;
 }
 
-function SupportBoard({ kind, inquiries, selectedInquiry, replies, writing, loading, submitting, loggedIn, onWrite, onCancelWrite, onSubmit, onOpen, onCloseDetail, onLoginRequired, onReply }: {
+function SupportBoard({ kind, inquiries, selectedInquiry, replies, hasOlderReplies, loadingOlderReplies, writing, loading, detailLoading, submitting, page, totalPages, loggedIn, onWrite, onCancelWrite, onSubmit, onOpen, onCloseDetail, onPageChange, onLoginRequired, onReply, onLoadOlderReplies }: {
   kind: InquiryKind;
   inquiries: SupportInquiry[];
   selectedInquiry: SupportInquiry | null;
   replies: SupportReply[];
+  hasOlderReplies: boolean;
+  loadingOlderReplies: boolean;
   writing: boolean;
   loading: boolean;
+  detailLoading: boolean;
   submitting: boolean;
+  page: number;
+  totalPages: number;
   loggedIn: boolean;
   onWrite: () => void;
   onCancelWrite: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onOpen: (inquiry: SupportInquiry) => void;
   onCloseDetail: () => void;
+  onPageChange: (page: number) => void;
   onLoginRequired: () => void;
-  onReply: (body: string) => void;
+  onReply: (body: string) => Promise<boolean>;
+  onLoadOlderReplies: () => void;
 }) {
   const copy = kind === "partner"
     ? { eyebrow: "PARTNERSHIP", title: "제휴문의", lead: "제휴 문의글은 작성자 본인과 운영자만 확인할 수 있습니다.", notice: "제휴문의 게시판입니다. (작성자 본인과 운영자만 볼 수 있습니다.)" }
     : { eyebrow: "CUSTOMER CENTER", title: "1:1문의하기", lead: "문의글은 작성자 본인과 운영자만 확인할 수 있습니다.", notice: "1:1문의 게시판입니다. (작성자 본인과 운영자만 볼 수 있습니다.)" };
+  const pageNumbers = visiblePageNumbers(page, totalPages);
   return <section className="board-page support-page page-width">
     <div className="forum-heading"><p className="eyebrow">{copy.eyebrow}</p><h1>{copy.title}</h1><p>{copy.lead}</p></div>
     {writing ? <SupportWritePage kind={kind} onCancel={onCancelWrite} onSubmit={onSubmit} submitting={submitting} /> : <>
-      {selectedInquiry && <SupportDetail inquiry={selectedInquiry} replies={replies} submitting={submitting} onClose={onCloseDetail} onReply={onReply} />}
+      {loggedIn && selectedInquiry && <SupportDetail inquiry={selectedInquiry} replies={replies} hasOlderReplies={hasOlderReplies} loadingOlderReplies={loadingOlderReplies} loading={detailLoading} submitting={submitting} onClose={onCloseDetail} onReply={onReply} onLoadOlderReplies={onLoadOlderReplies} />}
       <div className="support-board-notice" role="note"><b>알림</b><span>{copy.notice}</span><small>운영자</small></div>
       <div className="forum-table support-table" role="table" aria-label="1:1문의 목록">
         <div className="forum-row forum-head" role="row"><span>번호</span><b>제목</b><span>이름</span><span>답변</span><span>날짜</span></div>
         {!loggedIn ? <div className="forum-empty">로그인 후 1:1문의를 작성하고 확인할 수 있습니다.</div> : loading ? <div className="forum-empty">문의 목록을 불러오는 중입니다.</div> : inquiries.length ? inquiries.map((inquiry) => (
-          <button type="button" className="forum-row support-row" key={inquiry.id} onClick={() => onOpen(inquiry)}>
+          <button type="button" className="forum-row support-row" key={inquiry.id} disabled={loading} onClick={() => onOpen(inquiry)}>
             <span>{inquiry.id}</span><b>{inquiry.memberUnread > 0 && <em>[새답변]</em>}{inquiry.title}{inquiry.replyCount > 0 && <em>[{inquiry.replyCount}]</em>}<small>{inquiry.author} · {formatPostTime(inquiry.createdAt)}</small></b><span>{inquiry.author}</span><span>{supportStatusLabel(inquiry.status)}</span><span>{formatPostTime(inquiry.createdAt)}</span>
           </button>
         )) : <div className="forum-empty">게시물이 없습니다.</div>}
       </div>
       <div className="forum-bottom support-bottom">
         <button type="button" className="forum-search-button">검색</button>
-        <div className="forum-pagination"><button type="button" aria-label="이전 페이지">‹</button><button type="button" className="active">1</button><button type="button" aria-label="다음 페이지">›</button></div>
+        <div className="forum-pagination" aria-label="문의 목록 페이지"><button type="button" disabled={loading || page <= 1} onClick={() => onPageChange(page - 1)} aria-label="이전 페이지">‹</button>{pageNumbers.map((pageNumber) => <button type="button" className={pageNumber === page ? "active" : ""} aria-current={pageNumber === page ? "page" : undefined} disabled={loading} onClick={() => onPageChange(pageNumber)} key={pageNumber}>{pageNumber}</button>)}<button type="button" disabled={loading || page >= totalPages} onClick={() => onPageChange(page + 1)} aria-label="다음 페이지">›</button></div>
         <button type="button" className="forum-write-button" onClick={loggedIn ? onWrite : onLoginRequired}>글쓰기</button>
       </div>
     </>}
@@ -918,23 +1307,29 @@ function SupportWritePage({ kind, onCancel, onSubmit, submitting }: { kind: Inqu
   </form>;
 }
 
-function SupportDetail({ inquiry, replies, submitting, onClose, onReply }: {
+function SupportDetail({ inquiry, replies, hasOlderReplies, loadingOlderReplies, loading, submitting, onClose, onReply, onLoadOlderReplies }: {
   inquiry: SupportInquiry;
   replies: SupportReply[];
+  hasOlderReplies: boolean;
+  loadingOlderReplies: boolean;
+  loading: boolean;
   submitting: boolean;
   onClose: () => void;
   onReply: (body: string) => Promise<boolean>;
+  onLoadOlderReplies: () => void;
 }) {
+  const replyCount = Math.max(Number(inquiry.replyCount || 0), replies.length);
   return <article className="forum-detail support-detail">
-    <header><h2>{inquiry.title}</h2><div><span>{inquiry.author}</span><span>{new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(inquiry.createdAt))}</span><span>{supportStatusLabel(inquiry.status)}</span><span>댓글 {replies.length}</span></div></header>
-    <div className="forum-detail-body rich-body" dangerouslySetInnerHTML={{ __html: renderRichBody(inquiry.body) }} />
+    <header><h2>{inquiry.title}</h2><div><span>{inquiry.author}</span><span>{new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(inquiry.createdAt))}</span><span>{supportStatusLabel(inquiry.status)}</span><span>댓글 {replyCount}</span></div></header>
+    <div className="forum-detail-body rich-body" dangerouslySetInnerHTML={{ __html: renderRichBody(inquiry.body ?? "") }} />
     <section className="forum-comments">
-      <div className="comment-heading"><b>문의 댓글 <em>{replies.length}</em>개</b><button type="button" onClick={onClose}>목록</button></div>
+      <div className="comment-heading"><b>문의 댓글 <em>{replyCount}</em>개</b><button type="button" onClick={onClose}>목록</button></div>
       <div className="comment-list">
+        {!loading && hasOlderReplies && <button type="button" className="support-replies-more" onClick={onLoadOlderReplies} disabled={loadingOlderReplies}>{loadingOlderReplies ? "이전 답변 불러오는 중…" : "이전 답변 더보기"}</button>}
         {replies.map((reply) => <div className={`comment-item support-reply ${reply.senderType}`} key={reply.id}><b>{reply.senderType === "staff" ? "운영자" : inquiry.author}</b><div className="rich-body support-reply-body" dangerouslySetInnerHTML={{ __html: renderRichBody(reply.body) }} /><time>{formatPostTime(reply.createdAt)}</time></div>)}
-        {replies.length === 0 && <p className="comment-empty">아직 답변이 없습니다.</p>}
+        {loading ? <p className="comment-empty">문의 내용을 불러오는 중입니다.</p> : replies.length === 0 && <p className="comment-empty">아직 답변이 없습니다.</p>}
       </div>
-      <SupportReplyComposer key={inquiry.id} submitting={submitting} onSend={onReply} />
+      <SupportReplyComposer key={inquiry.id} submitting={submitting || loading} onSend={onReply} />
     </section>
   </article>;
 }
@@ -1213,7 +1608,7 @@ function CommunityPostTitle({ category, title, titleColor, tags }: { category: s
   return <><span className="community-title-tags" aria-label={`머릿글 ${visibleTags.join(", ")}`}>{visibleTags.join(" ")}</span><PostTitleText title={title} titleColor={titleColor} /></>;
 }
 
-function BoardPreview({ kind, title, posts, onMore }: { kind: BoardKind; title: string; posts: ReturnType<typeof boardPosts>; onMore: () => void }) {
+function BoardPreview({ kind, title, posts, onMore }: { kind: BoardKind; title: string; posts: BoardDisplayPost[]; onMore: () => void }) {
   return <section className="board-card"><div className="section-heading compact"><h2>{title}</h2><button onClick={onMore}>더보기 <span>›</span></button></div><div className="preview-posts">{posts.map((post, index) => <button key={post.id} onClick={onMore}><span className={`post-mark ${index === 0 ? "hot" : ""}`}>{index === 0 ? "HOT" : String(index + 1).padStart(2, "0")}</span><b><CommunityPostTitle category={kind} title={post.title} titleColor={post.titleColor} tags={post.communityTags} /></b><small>{post.time}</small></button>)}</div></section>;
 }
 
@@ -1324,8 +1719,7 @@ function EventPage(props: BoardPageProps) {
     </div>
 
     <div className="event-posts-heading">
-      <p className="eyebrow">EVENT BOARD</p>
-      <h2>진행 이벤트</h2>
+      <p className="eyebrow">EVENT BOARD</p><h2>진행 이벤트</h2>
     </div>
     <BoardPage {...props} hideHeading />
   </section>;
@@ -1378,16 +1772,9 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
     }
     setFilter(nextFilter);
   };
-  const toDisplayPost = (post: LivePost): BoardDisplayPost => ({
-    id: post.id, title: post.title, titleColor: post.titleColor || "", body: post.body, communityTags: post.communityTags, author: post.author, authorLevel: post.authorLevel,
-    time: formatPostTime(post.createdAt), views: post.views, likes: post.likes, dislikes: post.dislikes ?? 0,
-    reportCount: post.reportCount ?? 0, isNotice: Boolean(post.isNotice), isPinned: Boolean(post.isPinned), commentCount: post.commentCount ?? 0,
-    isOwn: post.isOwn, canEdit: post.canEdit, canDelete: post.canDelete, createdAt: post.createdAt, live: true,
-  });
-  const memberPosts = livePosts.map(toDisplayPost);
-  const popularMembers = (popularLivePosts ?? livePosts).map(toDisplayPost);
-  const samplePosts = boardPosts(kind);
-  const allPosts = [...memberPosts, ...samplePosts].sort((left, right) =>
+  const memberPosts = livePosts.map(livePostToBoardDisplayPost);
+  const popularMembers = (popularLivePosts ?? livePosts).map(livePostToBoardDisplayPost);
+  const allPosts = [...memberPosts].sort((left, right) =>
     Number(right.isPinned) - Number(left.isPinned)
     || Number(right.isNotice) - Number(left.isNotice)
     || postCreatedTime(right) - postCreatedTime(left));
@@ -1486,18 +1873,6 @@ function CommunityTagPicker({ value, onChange }: { value: readonly CommunityTag[
   </fieldset>;
 }
 
-function TitleColorPicker({ value, onChange }: { value: TitleColor; onChange: (color: TitleColor) => void }) {
-  return <fieldset className="title-color-picker">
-    <legend>제목 색상</legend>
-    <div className="title-color-options">
-      {TITLE_COLOR_OPTIONS.map((option) => <label className={value === option.value ? "selected" : ""} key={option.label}>
-        <input type="radio" name="titleColor" value={option.value} checked={value === option.value} onChange={() => onChange(option.value)} />
-        <span><i style={{ background: option.value || "#111111" }} />{option.label}</span>
-      </label>)}
-    </div>
-  </fieldset>;
-}
-
 function BoardWritePage({ kind, viewer, onCancel, onSubmit, submitting }: { kind: BoardKind; viewer: Viewer | null; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; submitting: boolean }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -1516,6 +1891,9 @@ function BoardWritePage({ kind, viewer, onCancel, onSubmit, submitting }: { kind
 function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostChange, onPostRemoved, onPointReward, showToast }: { kind: BoardKind; post: BoardDisplayPost; viewer: Viewer | null; onLoginRequired: () => void; onPostChange: (post: BoardDisplayPost) => void; onPostRemoved: (postId: number) => void; onPointReward: (points: number) => void; showToast: (message: string) => void }) {
   const [post, setPost] = useState(initialPost);
   const [comments, setComments] = useState<PostComment[]>([]);
+  const [commentCursor, setCommentCursor] = useState<number | null>(null);
+  const [commentLoading, setCommentLoading] = useState(false);
+  const commentSentinelRef = useRef<HTMLSpanElement>(null);
   const [commentBody, setCommentBody] = useState("");
   const [sort, setSort] = useState<"old" | "new">("old");
   const [submitting, setSubmitting] = useState(false);
@@ -1534,7 +1912,7 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
     if (!initialPost.live || typeof initialPost.id !== "number") return;
     let active = true;
     fetch(`/api/posts/${initialPost.id}`, { cache: "no-store" }).then(async (response) => {
-      const result = await response.json() as { post?: LivePost; comments?: PostComment[]; poll?: PostPoll | null; error?: string };
+      const result = await response.json() as { post?: LivePost; comments?: PostComment[]; nextCommentCursor?: number | null; poll?: PostPoll | null; error?: string };
       if (!response.ok || !result.post) throw new Error(result.error ?? "게시글을 불러오지 못했습니다.");
       if (!active) return;
       const next = { ...initialPost, ...result.post, time: formatPostTime(result.post.createdAt), live: true };
@@ -1545,6 +1923,7 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
       setEditPinned(Boolean(next.isPinned));
       setEditCommunityTags(next.communityTags);
       setComments(result.comments ?? []);
+      setCommentCursor(result.nextCommentCursor ?? null);
       setPoll(result.poll ?? null);
       onPostChange(next);
     }).catch((error) => { if (active) showToast(error instanceof Error ? error.message : "게시글을 불러오지 못했습니다."); });
@@ -1552,6 +1931,36 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
     // 게시글 번호나 로그인 사용자가 바뀔 때 상세 권한을 다시 조회합니다. 부모 콜백 변경은 재조회를 유발하지 않습니다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPost.id, viewer?.nickname, viewer?.level]);
+
+  const loadMoreComments = useCallback(async () => {
+    if (!commentCursor || commentLoading || !post.live || typeof post.id !== "number") return;
+    setCommentLoading(true);
+    try {
+      const response = await fetch(`/api/posts/${post.id}/comments?cursor=${commentCursor}&limit=50`, { cache: "no-store" });
+      const result = await response.json() as { comments?: PostComment[]; nextCursor?: number | null; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "댓글을 불러오지 못했습니다.");
+      setComments((current) => {
+        const known = new Set(current.map((comment) => comment.id));
+        return [...current, ...(result.comments ?? []).filter((comment) => !known.has(comment.id))];
+      });
+      setCommentCursor(result.nextCursor ?? null);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "댓글을 불러오지 못했습니다.");
+      setCommentCursor(null);
+    } finally {
+      setCommentLoading(false);
+    }
+  }, [commentCursor, commentLoading, post.id, post.live, showToast]);
+
+  useEffect(() => {
+    const target = commentSentinelRef.current;
+    if (!target || !commentCursor) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMoreComments();
+    }, { rootMargin: "300px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [commentCursor, loadMoreComments]);
 
   const vote = async (voteType: "up" | "down", basePost = post) => {
     if (!viewer) { onLoginRequired(); showToast("로그인 후 추천 또는 비추천할 수 있습니다."); return false; }
@@ -1671,6 +2080,7 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
     <section className="forum-comments">
       <div className="comment-heading"><b>전체 댓글 <em>{post.commentCount}</em>개</b><div><label><input type="radio" checked={sort === "old"} onChange={() => setSort("old")} /> 등록순</label><label><input type="radio" checked={sort === "new"} onChange={() => setSort("new")} /> 최신순</label></div></div>
       <div className="comment-list">{sortedComments.map((comment) => <div className="comment-item" key={comment.id}><b>{comment.authorLevel > 0 ? `Lv.${comment.authorLevel} ${comment.author}` : comment.author}</b><p>{comment.body}</p><time>{formatPostTime(comment.createdAt)}</time></div>)}{comments.length === 0 && <p className="comment-empty">첫 댓글을 남겨보세요.</p>}</div>
+      <span ref={commentSentinelRef} className="comment-load-sentinel" aria-hidden="true" />
       <div className="comment-write"><div><strong>{viewer ? viewer.nickname : "로그인이 필요합니다"}</strong><span>{commentBody.length} / 500</span></div><textarea value={commentBody} onChange={(event) => setCommentBody(event.target.value)} maxLength={500} placeholder="댓글을 입력해 주세요." onFocus={() => { if (!viewer) onLoginRequired(); }} /><div><button type="button" disabled={submitting} onClick={() => void submitComment(false)}>등록</button><button type="button" disabled={submitting || post.isOwn || post.author === viewer?.nickname} onClick={() => void submitComment(true)}>등록+추천</button></div></div>
     </section>
   </article>;

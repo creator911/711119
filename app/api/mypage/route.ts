@@ -11,8 +11,10 @@ export async function GET(request: Request) {
       SELECT p.id,p.category,p.title,p.title_color AS titleColor,p.body,p.views,p.likes,p.dislikes,p.report_count AS reportCount,p.is_notice AS isNotice,p.is_pinned AS isPinned,p.community_tag_mask AS communityTagMask,p.created_at AS createdAt,
              COALESCE(u.nickname,'탈퇴회원') AS author,
              COALESCE(u.level,0) AS authorLevel,
-             (SELECT COUNT(*) FROM post_comments c WHERE c.post_id=p.id AND c.status='published') AS commentCount
-      FROM posts p LEFT JOIN users u ON u.id = p.author_id
+             COALESCE(s.comment_count,0) AS commentCount
+      FROM posts p
+      LEFT JOIN users u ON u.id=p.author_id
+      LEFT JOIN post_stats s ON s.post_id=p.id
       WHERE p.author_id = ? AND p.status = 'published'
       ORDER BY p.id DESC LIMIT 100
     `).bind(user.id).all();

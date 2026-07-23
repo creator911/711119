@@ -1,0 +1,32 @@
+[Unit]
+Description=Nara001 background worker
+After=network-online.target nara001-public.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nara001
+Group=nara001
+WorkingDirectory=/opt/nara001/current
+Environment=NODE_ENV=production
+Environment=NARA_APP_SURFACE=worker
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/etc/nara001/shared.env
+EnvironmentFile=/etc/nara001/worker.env
+ExecStartPre=/usr/local/bin/node server/migrate.mjs
+ExecStart=/usr/local/bin/npm run worker
+Restart=always
+RestartSec=3
+TimeoutStartSec=120
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nara001
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

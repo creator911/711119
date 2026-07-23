@@ -73,6 +73,7 @@ try {
         database._runSync(`INSERT INTO event_reward_payouts(period_type,board_type,period_start,period_end,user_id,rank,activity_count,points,nickname_snapshot,level_snapshot,created_at) VALUES('weekly',?,?,?,?,?,?,?,?,?,?)`, [boardType, initial.body.previous.period.startAt, initial.body.previous.period.endAt, userId, index + 1, activityCount, [10000, 5000, 1000][index], users[index].nickname, users[index].level, createdAt]);
       }
     }
+    database._runSync("DELETE FROM site_settings WHERE key LIKE ?", [`event_leaderboard_snapshot:weekly:%:${initial.body.current.period.startAt}`]);
   });
 
   const audit = await json(await fetch(`${baseUrl}/api/admin/event-rewards?period=weekly`, { headers: { Cookie: cookie } }));

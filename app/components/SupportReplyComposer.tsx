@@ -1,11 +1,10 @@
 "use client";
 
 import { ChangeEvent, DragEvent, FormEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { uploadMediaFile } from "../lib/client-media-upload";
 import { IMAGE_UPLOAD_LIMIT, optimizeImageFile } from "./RichTextEditor";
 
 type Attachment = { previewUrl: string; protectedUrl: string; name: string };
-type UploadResult = { url?: string; mediaType?: string; name?: string; error?: string };
-
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/bmp"]);
 const MAX_IMAGES = 4;
 const escapeHtml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -54,16 +53,8 @@ export default function SupportReplyComposer({
         setMessage(`사진 최적화 및 첨부 중 ${index + 1}/${files.length}`);
         const optimized = await optimizeImageFile(files[index]);
         if (optimized.size > IMAGE_UPLOAD_LIMIT) throw new Error("이미지는 최적화 후 12MB 이하여야 합니다.");
-        const form = new FormData();
-        form.append("file", optimized, optimized.name);
-        const response = await fetch("/api/uploads", {
-          method: "POST",
-          body: form,
-          signal: controller.signal,
-          headers: variant === "admin" ? { "X-Upload-Context": "admin" } : undefined,
-        });
-        const result = await response.json() as UploadResult;
-        if (!response.ok || !result.url || result.mediaType !== "image") throw new Error(result.error ?? "사진을 첨부하지 못했습니다.");
+        const result = await uploadMediaFile(optimized, { signal: controller.signal, admin: variant === "admin" });
+        if (!result.url || result.mediaType !== "image") throw new Error("사진을 첨부하지 못했습니다.");
         uploaded.push({ previewUrl: result.url, protectedUrl: protectedMediaUrl(result.url), name: result.name ?? optimized.name });
       }
       setAttachments((current) => [...current, ...uploaded]);

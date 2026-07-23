@@ -94,7 +94,7 @@ export default function AdminAnnouncements() {
       {loading ? <p className="admin-empty">알림 내역을 불러오는 중입니다.</p> : announcements.length ? <div className="announcement-history-list">{announcements.map((item) => <article key={item.id}>
         <header><span className={`announcement-state ${item.state}`}>{stateLabels[item.state]}</span><b>{item.requiresConfirmation ? "확인 필수" : "자동 닫힘"}</b><small>#{item.id}</small></header>
         <p>{item.content}</p>
-        <dl><div><dt>노출 기간</dt><dd>{formatDate(item.startsAt)}<br />~ {formatDate(item.endsAt)}</dd></div><div><dt>노출 회원</dt><dd>{item.deliveredCount.toLocaleString()}명</dd></div><div><dt>확인 완료</dt><dd>{item.acknowledgedCount.toLocaleString()}명</dd></div><div><dt>등록자</dt><dd>{item.createdBy}</dd></div></dl>
+        <dl><div><dt>노출 기간</dt><dd>{formatDate(item.startsAt)}<br />~ {formatDate(item.endsAt)}</dd></div><div><dt>{item.requiresConfirmation ? "확인 완료" : "노출 완료"}</dt><dd>{item.acknowledgedCount.toLocaleString()}명</dd></div><div><dt>등록자</dt><dd>{item.createdBy}</dd></div></dl>
         {(item.state === "scheduled" || item.state === "active") && <button className="announcement-cancel" type="button" onClick={() => void cancel(item.id)}>노출 중단</button>}
       </article>)}</div> : <p className="admin-empty">등록된 전체 알림 공지가 없습니다.</p>}
     </section>

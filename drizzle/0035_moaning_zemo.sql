@@ -1,0 +1,2 @@
+CREATE INDEX `users_username_nocase_id_idx` ON `users` ("username" COLLATE NOCASE,`id`);--> statement-breakpoint
+CREATE INDEX `users_nickname_nocase_id_idx` ON `users` ("nickname" COLLATE NOCASE,`id`);

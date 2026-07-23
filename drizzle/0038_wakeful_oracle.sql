@@ -1,0 +1,1 @@
+CREATE INDEX `support_inquiries_admin_priority_idx` ON `support_inquiries` (`kind`,(CASE WHEN "status"='open' THEN 0 ELSE 1 END),"staff_unread" DESC,"updated_at" DESC,"id" DESC) WHERE "support_inquiries"."status" != 'deleted';
