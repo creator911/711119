@@ -41,6 +41,12 @@ test("the isolated worker does not depend on a public service unit on the admin 
   assert.doesNotMatch(worker, /nara001-public\.service/);
 });
 
+test("the isolated admin host permits only the exact Vinext RSC transport path", () => {
+  const nginx = read("deploy/nginx-split.conf.template");
+  assert.match(nginx, /location = \/\.rsc \{ proxy_pass http:\/\/nara_admin;/);
+  assert.doesNotMatch(nginx, /location \^~ \/\.rsc|location \/\.rsc/);
+});
+
 test("fresh server install bootstraps TLS before installing the SSL vhost", () => {
   const install = read("deploy/install-server.sh");
   const bootstrap = read("deploy/nginx-bootstrap.conf");

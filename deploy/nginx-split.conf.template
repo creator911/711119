@@ -106,6 +106,7 @@ server {
     add_header X-Robots-Tag "noindex, nofollow, noarchive" always;
     location = /robots.txt { return 200 "User-agent: *\nDisallow: /\n"; }
     location = / { return 302 /admin; }
+    location = /.rsc { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
     location ^~ /admin { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
     location ^~ /api/admin { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
     location = /api/uploads { proxy_pass http://nara_admin; include /etc/nginx/proxy_params; proxy_set_header Host $host; }
