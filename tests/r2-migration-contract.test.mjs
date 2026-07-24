@@ -7,6 +7,7 @@ test("R2 migration verifies every object by size and SHA-256", async () => {
   assert.match(source, /bodySha256/);
   assert.match(source, /Source checksum mismatch/);
   assert.match(source, /"nara-sha256"/);
+  assert.match(source, /size: Number\(item\.size\)/);
   assert.match(source, /targetSha256 !== sourceSha256/);
   assert.match(source, /manifestSha256/);
   assert.match(source, /sourceObjects !== report\.verifiedObjects/);

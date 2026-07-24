@@ -49,6 +49,7 @@ do {
     const uploadObject = await source.get(item.key);
     if (!uploadObject) throw new Error(`Source object disappeared during copy: ${item.key}`);
     await target.put(item.key, uploadObject.body, {
+      size: Number(item.size),
       httpMetadata: uploadObject.httpMetadata,
       customMetadata: {
         ...uploadObject.customMetadata,

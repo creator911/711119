@@ -59,10 +59,20 @@ export class S3R2Bucket {
   }
 
   async put(key, value, options = {}) {
+    const body = bodyValue(value);
+    const inferredLength = typeof body?.byteLength === "number"
+      ? Number(body.byteLength)
+      : typeof body?.size === "number"
+        ? Number(body.size)
+        : undefined;
+    const contentLength = Number.isFinite(Number(options.size))
+      ? Number(options.size)
+      : inferredLength;
     const result = await this.client.send(new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
-      Body: bodyValue(value),
+      Body: body,
+      ContentLength: Number.isFinite(contentLength) ? contentLength : undefined,
       ContentType: options.httpMetadata?.contentType,
       ContentLanguage: options.httpMetadata?.contentLanguage,
       ContentDisposition: options.httpMetadata?.contentDisposition,
