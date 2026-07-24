@@ -70,6 +70,12 @@ function appendConflictDoNothing(sql) {
   return `${sql.replace(/;\s*$/, "").trimEnd()} ON CONFLICT DO NOTHING${semicolon}`;
 }
 
+function preserveCamelCaseAliases(sql) {
+  return sql.replace(/\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b/g, (match, alias) => (
+    /[a-z]/.test(alias) && /[A-Z]/.test(alias) ? `AS "${alias}"` : match
+  ));
+}
+
 export function translateSqliteSql(input) {
   let sql = String(input)
     .replace(/`([^`]+)`/g, '"$1"')
@@ -78,6 +84,7 @@ export function translateSqliteSql(input) {
     .replace(/\bINSERT\s+OR\s+IGNORE\s+INTO\b/i, "INSERT INTO");
 
   const wasInsertOrIgnore = /\bINSERT\s+OR\s+IGNORE\s+INTO\b/i.test(String(input));
+  sql = preserveCamelCaseAliases(sql);
   sql = placeholderSql(sql);
   sql = sql
     .replace(

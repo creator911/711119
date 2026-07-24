@@ -31,6 +31,14 @@ test("SQLite query compatibility translation preserves bindings and conflict beh
     translateSqliteSql("DELETE FROM jobs WHERE rowid IN(SELECT rowid FROM jobs LIMIT ?)"),
     /ctid IN\(SELECT ctid FROM jobs LIMIT \$1\)/,
   );
+  assert.equal(
+    translateSqliteSql("SELECT created_at AS createdAt,title_color AS titleColor FROM posts"),
+    'SELECT created_at AS "createdAt",title_color AS "titleColor" FROM posts',
+  );
+  assert.equal(
+    translateSqliteSql("SELECT CAST(points AS INTEGER) AS points FROM users"),
+    "SELECT CAST(points AS INTEGER) AS points FROM users",
+  );
 });
 
 test("PostgreSQL adapter exposes D1 first/all/run/batch contracts", async () => {
@@ -60,5 +68,9 @@ test("PostgreSQL adapter exposes D1 first/all/run/batch contracts", async () => 
   ]);
   assert.equal(results[0].meta.changes, 1);
   assert.equal(results[1].results[0].points, 15);
+  assert.deepEqual(
+    await database.prepare("SELECT username AS displayName,points AS pointTotal FROM users WHERE id=?").bind(1).first(),
+    { displayName: "Member", pointTotal: 15 },
+  );
   await pool.end();
 });
