@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
-const projectRoot = new URL("../", import.meta.url);
-
 test("출장나라 메인 화면과 배포 산출물을 구성한다", async () => {
   const [page, layout, portal] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -38,7 +36,7 @@ test("완성된 사이트에서 임시 미리보기 자산을 제거했다", asy
   assert.match(page, /<Portal \/>/);
   assert.match(layout, /site-metadata/);
   assert.doesNotMatch(page + layout + packageJson, /codex-preview|react-loading-skeleton|SkeletonPreview/);
-  await assert.rejects(access(new URL("../app/_sites-preview", projectRoot)));
+  await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
 });
 
 test("제휴 슬롯 저장 버튼은 흰 배경에서 검은 글자로 표시된다", async () => {

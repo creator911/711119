@@ -27,7 +27,7 @@ export async function uploadMediaFile(file: File, {
   signal?: AbortSignal;
   admin?: boolean;
 } = {}): Promise<ClientUploadResult> {
-  const contextHeaders = admin ? { "X-Upload-Context": "admin" } : {};
+  const contextHeaders: Record<string, string> = admin ? { "X-Upload-Context": "admin" } : {};
   const prepared = await fetch("/api/uploads", {
     method: "POST",
     signal,

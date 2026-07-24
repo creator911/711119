@@ -58,7 +58,7 @@ type Overview = {
   blockedIps: BlockedIp[];
 };
 
-const emptyOverview: Overview = { operator: { username: "", role: "owner", level: 10, canManageAdmins: false }, health: { status: "unavailable", database: "error", migrations: "unknown", application: "not_ready", missingSchemaObjects: 0, latencyMs: 0, checkedAt: "" }, stats: { totalMembers: 0, activeMembers: 0, todayMembers: 0, todayPosts: 0, todayAttendance: 0, supportUnread: 0, partnerUnread: 0, shopLowStockProducts: 0 }, posts: [], blockedIps: [] };
+const emptyOverview: Overview = { operator: { username: "", role: "owner", level: 10, canManageAdmins: false }, health: { status: "unavailable", database: "error", cache: "not_configured", storage: "not_configured", worker: "not_configured", migrations: "unknown", application: "not_ready", missingSchemaObjects: 0, latencyMs: 0, checkedAt: "" }, stats: { totalMembers: 0, activeMembers: 0, todayMembers: 0, todayPosts: 0, todayAttendance: 0, supportUnread: 0, partnerUnread: 0, shopLowStockProducts: 0 }, posts: [], blockedIps: [] };
 const formatDate = (value: string) => value ? new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)) : "—";
 const DEFAULT_MAIN_DOMAIN = "https://nara001.co.kr";
 const MEMBER_SORT_OPTIONS: Array<{ value: MemberSort; label: string }> = [

@@ -1,6 +1,7 @@
 "use client";
 
 import NextImage from "next/image";
+import NextLink from "next/link";
 import { FormEvent, ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import AttendanceModal from "./AttendanceModal";
 import { FeaturedVendorDetail, FeaturedVendorGrid, type FeaturedVendorPost } from "./FeaturedVendors";
@@ -18,8 +19,14 @@ import { COMMUNITY_TAGS, isCommunityBoardCategory, type CommunityTag } from "../
 import { type TitleColor } from "../lib/title-colors";
 import { attendancePointsForLevel } from "../lib/member-level";
 import { publishMemberSession } from "../lib/member-session-client";
+import {
+  buildPublicUrl,
+  parsePublicLocation,
+  type PublicLocation,
+  type PublicView,
+} from "../lib/public-navigation";
 
-type View = "home" | "notices" | "vendors" | "community" | "reviews" | "events" | "partner" | "support" | "mypage" | "shop";
+type View = PublicView;
 type BoardKind = "notices" | "reviews" | "events" | "gifs" | "community";
 type InquiryKind = "support" | "partner";
 type Modal = "login" | "signup" | "attendance" | null;
@@ -156,8 +163,13 @@ const navItems: { key: View; label: string }[] = [
   { key: "support", label: "고객센터" },
 ];
 
-export default function Portal() {
-  const [view, setView] = useState<View>("home");
+export default function Portal({ initialView = "home" }: { initialView?: View }) {
+  const [view, setView] = useState<View>(initialView);
+  const [routePage, setRoutePage] = useState(1);
+  const [routePostId, setRoutePostId] = useState<number | null>(null);
+  const [routeFeaturedSlot, setRouteFeaturedSlot] = useState<number | null>(null);
+  const [routeVendorPostId, setRouteVendorPostId] = useState<number | null>(null);
+  const [routeInquiryId, setRouteInquiryId] = useState<number | null>(null);
   const [vendorCategory, setVendorCategory] = useState("전체");
   const [region, setRegion] = useState("전체");
   const [district, setDistrict] = useState("전체");
@@ -208,6 +220,7 @@ export default function Portal() {
   const supportPageRef = useRef(supportPage);
   const supportViewerRef = useRef<string | null>(null);
   const viewRef = useRef<View>(view);
+  const routePageRef = useRef(routePage);
   const viewerNickname = viewer?.nickname;
   const activeInquiryKind: InquiryKind = view === "partner" ? "partner" : "support";
 
@@ -251,6 +264,7 @@ export default function Portal() {
 
   useEffect(() => { supportPageRef.current = supportPage; }, [supportPage]);
   useEffect(() => { viewRef.current = view; }, [view]);
+  useEffect(() => { routePageRef.current = routePage; }, [routePage]);
 
   useEffect(() => {
     const now = new Date();
@@ -278,34 +292,73 @@ export default function Portal() {
     resetSupportState();
   }, [resetSupportState, viewerNickname]);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const board = params.get("board");
-    const postId = Number(params.get("post"));
-    if (!(board === "notices" || board === "reviews" || board === "events" || board === "gifs" || board === "community")) return;
-    const viewBoard = board === "gifs" ? "community" : board;
-    const timer = window.setTimeout(() => {
-      setView(viewBoard);
-      if (!Number.isInteger(postId) || postId < 1) return;
-      fetch(`/api/posts?category=${viewBoard}`, { cache: "no-store" }).then(async (response) => {
-        const result = await response.json() as { posts?: LivePost[]; error?: string };
-        const sharedPost = result.posts?.find((item) => item.id === postId);
-        if (!response.ok || !sharedPost) throw new Error(result.error ?? "게시글을 불러오지 못했습니다.");
-        setSelectedPost({
-          id: sharedPost.id, title: sharedPost.title, titleColor: sharedPost.titleColor || "", body: sharedPost.body, communityTags: sharedPost.communityTags, author: sharedPost.author,
-          authorLevel: sharedPost.authorLevel, time: formatPostTime(sharedPost.createdAt), views: sharedPost.views,
-          likes: sharedPost.likes, dislikes: sharedPost.dislikes ?? 0, reportCount: sharedPost.reportCount ?? 0, isNotice: Boolean(sharedPost.isNotice), isPinned: Boolean(sharedPost.isPinned),
-          commentCount: sharedPost.commentCount, isOwn: sharedPost.isOwn, canEdit: sharedPost.canEdit, canDelete: sharedPost.canDelete, createdAt: sharedPost.createdAt, live: true,
-        });
-      }).catch(() => { window.history.replaceState(null, "", window.location.pathname); });
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
   const showToast = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   }, []);
+
+  const writeBrowserLocation = useCallback((nextView: View, options: Partial<Omit<PublicLocation, "view">> = {}, replace = false) => {
+    const href = buildPublicUrl(nextView, options);
+    const currentHref = `${window.location.pathname}${window.location.search}`;
+    if (currentHref === href) return;
+    window.history[replace ? "replaceState" : "pushState"](null, "", href);
+  }, []);
+
+  useEffect(() => {
+    const syncFromBrowser = () => {
+      const location = parsePublicLocation(window.location.pathname, window.location.search);
+      viewRef.current = location.view;
+      routePageRef.current = location.page;
+      setView(location.view);
+      setRoutePage(location.page);
+      setRoutePostId(location.postId);
+      setRouteFeaturedSlot(location.featuredSlot);
+      setRouteVendorPostId(location.vendorPostId);
+      setRouteInquiryId(location.inquiryId);
+      setWriteKind(null);
+      setSelectedPost(null);
+      setSelectedFeaturedVendor(null);
+      setSupportWriting(false);
+      if (location.view === "support" || location.view === "partner") {
+        activeInquiryKindRef.current = location.view === "partner" ? "partner" : "support";
+        supportPageRef.current = location.page;
+        setSupportPage(location.page);
+      }
+      if (!location.inquiryId) {
+        selectedInquiryIdRef.current = null;
+        setSelectedInquiry(null);
+        setSupportLoadedInquiryId(null);
+        setSupportReplies([]);
+        resetSupportReplyPagination();
+      }
+      const canonical = buildPublicUrl(location.view, location);
+      if (`${window.location.pathname}${window.location.search}` !== canonical) {
+        window.history.replaceState(null, "", canonical);
+      }
+    };
+    syncFromBrowser();
+    window.addEventListener("popstate", syncFromBrowser);
+    return () => window.removeEventListener("popstate", syncFromBrowser);
+  }, [resetSupportReplyPagination]);
+
+  useEffect(() => {
+    if (!routePostId || !(view === "notices" || view === "reviews" || view === "events" || view === "community")) return;
+    const controller = new AbortController();
+    fetch(`/api/posts/${routePostId}`, { cache: "no-store", signal: controller.signal }).then(async (response) => {
+      const result = await response.json() as { post?: LivePost; error?: string };
+      const post = result.post;
+      if (!response.ok || !post) throw new Error(result.error ?? "게시글을 불러오지 못했습니다.");
+      const postView = post.category === "gifs" ? "community" : post.category;
+      if (postView !== view) throw new Error("현재 게시판의 글이 아닙니다.");
+      setSelectedPost(livePostToBoardDisplayPost(post));
+    }).catch((error) => {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setRoutePostId(null);
+      writeBrowserLocation(view, { page: routePageRef.current }, true);
+      showToast(error instanceof Error ? error.message : "게시글을 불러오지 못했습니다.");
+    });
+    return () => controller.abort();
+  }, [routePostId, showToast, view, viewerNickname, writeBrowserLocation]);
 
   const handleLevelChange = useCallback((nextLevel: number) => {
     setViewer((current) => current ? { ...current, level: nextLevel } : current);
@@ -347,13 +400,18 @@ export default function Portal() {
   }, [loadFeaturedVendors, viewerNickname]);
 
   useEffect(() => {
-    if (!featuredVendors.length) return;
-    const slot = Number(new URLSearchParams(window.location.search).get("featured"));
-    const featured = Number.isInteger(slot) ? featuredVendors.find((post) => post.slot === slot) : null;
-    if (!featured) return;
-    const timer = window.setTimeout(() => { setView("vendors"); setSelectedFeaturedVendor(featured); }, 0);
+    if (!routeFeaturedSlot || view !== "vendors" || !featuredVendors.length) return;
+    const featured = featuredVendors.find((post) => post.slot === routeFeaturedSlot);
+    const timer = window.setTimeout(() => {
+      if (!featured) {
+        setRouteFeaturedSlot(null);
+        writeBrowserLocation("vendors", { page: routePageRef.current }, true);
+        return;
+      }
+      setSelectedFeaturedVendor(featured);
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [featuredVendors]);
+  }, [featuredVendors, routeFeaturedSlot, view, writeBrowserLocation]);
 
   const loadPosts = useCallback(async (kind: BoardKind) => {
     try {
@@ -466,9 +524,10 @@ export default function Portal() {
     setDistrict(nextDistrict);
   };
 
-  const go = (next: View) => {
+  const go = (next: View, historyMode: "push" | "replace" | "none" = "push") => {
     const sameInquiryTab = (next === "support" || next === "partner") && view === next;
     viewRef.current = next;
+    routePageRef.current = 1;
     if (next === "vendors") {
       setQuery("");
       setVendorSearch("");
@@ -476,6 +535,11 @@ export default function Portal() {
     }
     if (next === "support" || next === "partner") activeInquiryKindRef.current = next === "partner" ? "partner" : "support";
     setView(next);
+    setRoutePage(1);
+    setRoutePostId(null);
+    setRouteFeaturedSlot(null);
+    setRouteVendorPostId(null);
+    setRouteInquiryId(null);
     setWriteKind(null);
     setSelectedPost(null);
     setSelectedFeaturedVendor(null);
@@ -500,19 +564,21 @@ export default function Portal() {
         setSupportTotalPages(1);
       }
     }
-    window.history.replaceState(null, "", window.location.pathname);
+    if (historyMode !== "none") writeBrowserLocation(next, { page: 1 }, historyMode === "replace");
     window.scrollTo({ top: 0, behavior: "auto" });
   };
 
   const openFeaturedVendor = (post: FeaturedVendorPost) => {
-    go("vendors");
+    go("vendors", "none");
     setSelectedFeaturedVendor(post);
-    window.history.replaceState(null, "", `${window.location.pathname}?featured=${post.slot}`);
+    setRouteFeaturedSlot(post.slot);
+    writeBrowserLocation("vendors", { page: 1, featuredSlot: post.slot });
   };
 
   const closeFeaturedVendor = () => {
     setSelectedFeaturedVendor(null);
-    window.history.replaceState(null, "", window.location.pathname);
+    setRouteFeaturedSlot(null);
+    writeBrowserLocation("vendors", { page: routePageRef.current });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -542,7 +608,14 @@ export default function Portal() {
 
   const openMyPost = (post: MyPagePost) => {
     const board = post.category === "gifs" ? "community" : post.category;
+    viewRef.current = board;
+    routePageRef.current = 1;
     setView(board);
+    setRoutePage(1);
+    setRoutePostId(post.id);
+    setRouteFeaturedSlot(null);
+    setRouteVendorPostId(null);
+    setRouteInquiryId(null);
     setWriteKind(null);
     setSelectedPost({
       id: post.id, title: post.title, titleColor: post.titleColor || "", body: post.body, communityTags: post.communityTags, author: post.author, authorLevel: post.authorLevel,
@@ -550,7 +623,7 @@ export default function Portal() {
       reportCount: post.reportCount ?? 0, isNotice: Boolean(post.isNotice), isPinned: Boolean(post.isPinned), commentCount: post.commentCount ?? 0,
       isOwn: true, canEdit: true, canDelete: true, createdAt: post.createdAt, live: true,
     });
-    window.history.replaceState(null, "", `${window.location.pathname}?board=${board}&post=${post.id}`);
+    writeBrowserLocation(board, { page: 1, postId: post.id });
     window.scrollTo({ top: 70, behavior: "smooth" });
   };
 
@@ -643,7 +716,8 @@ export default function Portal() {
         likes: createdPost.likes, dislikes: createdPost.dislikes, reportCount: createdPost.reportCount, isNotice: Boolean(createdPost.isNotice), isPinned: Boolean(createdPost.isPinned),
         commentCount: createdPost.commentCount, isOwn: true, canEdit: true, canDelete: true, createdAt: createdPost.createdAt, live: true,
       });
-      window.history.replaceState(null, "", `${window.location.pathname}?board=${writeKind}&post=${createdPost.id}`);
+      setRoutePostId(createdPost.id);
+      writeBrowserLocation(writeKind === "gifs" ? "community" : writeKind, { page: routePageRef.current, postId: createdPost.id });
       if ((result.earnedPoints ?? 0) > 0) {
         const earnedPoints = result.earnedPoints ?? 0;
         setPoints((current) => current + earnedPoints);
@@ -709,6 +783,20 @@ export default function Portal() {
       }
     }
   }, [handleLevelSessionExpired, resetSupportReplyPagination, showToast]);
+
+  useEffect(() => {
+    if (!routeInquiryId || !viewerNickname || (view !== "support" && view !== "partner")) return;
+    const timer = window.setTimeout(() => {
+      selectedInquiryIdRef.current = routeInquiryId;
+      setSupportWriting(false);
+      setSelectedInquiry((current) => current?.id === routeInquiryId ? current : null);
+      setSupportLoadedInquiryId(null);
+      setSupportReplies([]);
+      resetSupportReplyPagination();
+      void loadSupportInquiry(routeInquiryId, view);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadSupportInquiry, resetSupportReplyPagination, routeInquiryId, view, viewerNickname]);
 
   const loadOlderSupportReplies = async () => {
     const id = selectedInquiryIdRef.current;
@@ -848,6 +936,10 @@ export default function Portal() {
       setSupportPage(1);
       setSupportWriting(false);
       void loadSupport(requestKind, 1, true);
+      setRoutePage(1);
+      routePageRef.current = 1;
+      setRouteInquiryId(result.inquiry.id);
+      writeBrowserLocation(requestKind, { page: 1, inquiryId: result.inquiry.id });
       showToast("1:1문의가 접수되었습니다.");
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError") && session === supportSessionSequenceRef.current) {
@@ -869,7 +961,8 @@ export default function Portal() {
     resetSupportReplyPagination();
     supportViewedSequenceRef.current += 1;
     supportViewedAbortRef.current?.abort();
-    void loadSupportInquiry(inquiry.id, activeInquiryKind);
+    setRouteInquiryId(inquiry.id);
+    writeBrowserLocation(activeInquiryKind, { page: routePageRef.current, inquiryId: inquiry.id });
   };
 
   const submitSupportReply = async (body: string): Promise<boolean> => {
@@ -921,6 +1014,34 @@ export default function Portal() {
     }
   };
 
+  const changeRoutePage = useCallback((nextPage: number, replace = false) => {
+    const safePage = Math.max(1, Math.trunc(nextPage));
+    routePageRef.current = safePage;
+    setRoutePage(safePage);
+    setRoutePostId(null);
+    setRouteFeaturedSlot(null);
+    setRouteVendorPostId(null);
+    setRouteInquiryId(null);
+    setSelectedPost(null);
+    setSelectedFeaturedVendor(null);
+    if (view === "support" || view === "partner") {
+      selectedInquiryIdRef.current = null;
+      setSelectedInquiry(null);
+      setSupportLoadedInquiryId(null);
+      setSupportReplies([]);
+      resetSupportReplyPagination();
+      supportPageRef.current = safePage;
+      setSupportPage(safePage);
+    }
+    writeBrowserLocation(view, { page: safePage }, replace);
+    window.scrollTo({ top: 70, behavior: "smooth" });
+  }, [resetSupportReplyPagination, view, writeBrowserLocation]);
+
+  const changeVendorRoutePost = useCallback((postId: number | null, replace = false) => {
+    setRouteVendorPostId(postId);
+    writeBrowserLocation("vendors", { page: routePageRef.current, vendorPostId: postId ?? undefined }, replace);
+  }, [writeBrowserLocation]);
+
   const search = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const keyword = query.trim();
@@ -936,9 +1057,9 @@ export default function Portal() {
     <div className="site-shell">
       <header className="site-header">
         <div className="header-top page-width">
-          <button className="logo-button" onClick={() => go("home")} aria-label="출장나라 홈">
+          <NextLink className="logo-button" href="/" onClick={(event) => { event.preventDefault(); go("home"); }} aria-label="출장나라 홈">
             <NextImage src="/logo.png" alt="출장나라" width={589} height={166} />
-          </button>
+          </NextLink>
           <form className="search" onSubmit={search}>
             <input value={query} onChange={(e) => setQuery(e.target.value)} maxLength={80} placeholder="지역·업종·업체명 검색" aria-label="업체정보 검색" />
             <button type="submit" aria-label="검색">⌕</button>
@@ -948,7 +1069,7 @@ export default function Portal() {
           </div>
         </div>
         <nav className="main-nav page-width" aria-label="주요 메뉴">
-          {navItems.map((item) => <button key={item.key} className={view === item.key ? "active" : ""} onClick={() => go(item.key)}>{item.label}</button>)}
+          {navItems.map((item) => <NextLink key={item.key} href={buildPublicUrl(item.key, { page: 1 })} className={view === item.key ? "active" : ""} onClick={(event) => { event.preventDefault(); go(item.key); }}>{item.label}</NextLink>)}
         </nav>
       </header>
 
@@ -1004,12 +1125,12 @@ export default function Portal() {
           <section className="listing-page vendor-listing page-width">
             {selectedFeaturedVendor ? <FeaturedVendorDetail post={selectedFeaturedVendor} onClose={closeFeaturedVendor} onSaved={saveFeaturedVendor} showToast={showToast} /> : <>
               <div className="filter-bar">
-                <VendorCategorySelector category={vendorCategory} onSelect={setVendorCategory} />
+                <VendorCategorySelector category={vendorCategory} onSelect={(nextCategory) => { setVendorCategory(nextCategory); changeRoutePage(1); }} />
                 <RegionSelector
                   region={region}
                   district={district}
-                  onSelectRegion={selectRegion}
-                  onSelectDistrict={setDistrict}
+                  onSelectRegion={(nextRegion, nextDistrict = "전체") => { selectRegion(nextRegion, nextDistrict); changeRoutePage(1); }}
+                  onSelectDistrict={(nextDistrict) => { setDistrict(nextDistrict); changeRoutePage(1); }}
                 />
               </div>
               <FeaturedVendorGrid posts={featuredVendors} loading={featuredLoading} onOpen={openFeaturedVendor} />
@@ -1019,8 +1140,12 @@ export default function Portal() {
                 region={region}
                 district={district}
                 search={vendorSearch}
+                page={routePage}
+                selectedPostId={routeVendorPostId}
                 viewerKey={viewer?.nickname ?? ""}
-                onClearSearch={() => { setQuery(""); setVendorSearch(""); setVendorSearchRevision((current) => current + 1); }}
+                onPageChange={changeRoutePage}
+                onSelectedPostChange={changeVendorRoutePost}
+                onClearSearch={() => { setQuery(""); setVendorSearch(""); setVendorSearchRevision((current) => current + 1); changeRoutePage(1); }}
                 onLoginRequired={() => setModal("login")}
                 showToast={showToast}
               />
@@ -1064,6 +1189,8 @@ export default function Portal() {
               supportViewedSequenceRef.current += 1;
               supportDetailAbortRef.current?.abort();
               supportViewedAbortRef.current?.abort();
+              setRouteInquiryId(null);
+              writeBrowserLocation(activeInquiryKind, { page: routePageRef.current });
             }}
             onPageChange={(nextPage) => {
               if (supportLoading || nextPage < 1 || nextPage > supportTotalPages || nextPage === supportPage) return;
@@ -1079,6 +1206,10 @@ export default function Portal() {
               supportViewedAbortRef.current?.abort();
               supportPageRef.current = nextPage;
               setSupportPage(nextPage);
+              setRoutePage(nextPage);
+              routePageRef.current = nextPage;
+              setRouteInquiryId(null);
+              writeBrowserLocation(activeInquiryKind, { page: nextPage });
             }}
             onLoginRequired={() => setModal("login")}
             onReply={submitSupportReply}
@@ -1090,16 +1221,22 @@ export default function Portal() {
           <EventPage
             kind="events"
             livePosts={livePosts.events ?? []}
+            loaded={Object.prototype.hasOwnProperty.call(livePosts, "events")}
             viewer={viewer}
             writing={writeKind === "events"}
             selectedPost={selectedPost}
             submitting={postSubmitting}
+            page={routePage}
+            onPageChange={changeRoutePage}
             onWrite={() => openWrite("events")}
             onCancelWrite={() => setWriteKind(null)}
             onSubmit={submitPost}
             onOpen={(post) => {
               setWriteKind(null); setSelectedPost(post);
-              if (post.live) window.history.replaceState(null, "", `${window.location.pathname}?board=events&post=${post.id}`);
+              if (post.live && typeof post.id === "number") {
+                setRoutePostId(post.id);
+                writeBrowserLocation("events", { page: routePageRef.current, postId: post.id });
+              }
               window.scrollTo({ top: 70, behavior: "smooth" });
             }}
             onLoginRequired={() => setModal("login")}
@@ -1113,7 +1250,8 @@ export default function Portal() {
             onPostRemoved={(postId) => {
               setSelectedPost(null);
               setLivePosts((current) => ({ ...current, events: (current.events ?? []).filter((item) => item.id !== postId) }));
-              window.history.replaceState(null, "", `${window.location.pathname}?board=events`);
+              setRoutePostId(null);
+              writeBrowserLocation("events", { page: routePageRef.current }, true);
             }}
             onPointReward={(earnedPoints) => {
               setPoints((current) => current + earnedPoints);
@@ -1127,16 +1265,22 @@ export default function Portal() {
             key={view}
             kind={view as BoardKind}
             livePosts={livePosts[view as BoardKind] ?? []}
+            loaded={Object.prototype.hasOwnProperty.call(livePosts, view)}
             viewer={viewer}
             writing={writeKind === view}
             selectedPost={selectedPost}
             submitting={postSubmitting}
+            page={routePage}
+            onPageChange={changeRoutePage}
             onWrite={() => openWrite(view as BoardKind)}
             onCancelWrite={() => setWriteKind(null)}
             onSubmit={submitPost}
             onOpen={(post) => {
               setWriteKind(null); setSelectedPost(post);
-              if (post.live) window.history.replaceState(null, "", `${window.location.pathname}?board=${view}&post=${post.id}`);
+              if (post.live && typeof post.id === "number") {
+                setRoutePostId(post.id);
+                writeBrowserLocation(view, { page: routePageRef.current, postId: post.id });
+              }
               window.scrollTo({ top: 70, behavior: "smooth" });
             }}
             onLoginRequired={() => setModal("login")}
@@ -1150,7 +1294,8 @@ export default function Portal() {
             onPostRemoved={(postId) => {
               setSelectedPost(null);
               setLivePosts((current) => ({ ...current, [view as BoardKind]: (current[view as BoardKind] ?? []).filter((item) => item.id !== postId) }));
-              window.history.replaceState(null, "", `${window.location.pathname}?board=${view}`);
+              setRoutePostId(null);
+              writeBrowserLocation(view, { page: routePageRef.current }, true);
             }}
             onPointReward={(earnedPoints) => {
               setPoints((current) => current + earnedPoints);
@@ -1432,12 +1577,16 @@ function VendorSection({ posts, loading, onOpen, onMore }: { posts: FeaturedVend
   return <section className="content-section page-width"><div className="section-heading"><div><p className="eyebrow">EDITOR&apos;S PICK</p><h2>추천 업체</h2></div><button onClick={onMore}>전체보기 <span>›</span></button></div><FeaturedVendorGrid posts={posts} loading={loading} onOpen={onOpen} /></section>;
 }
 
-function VendorTextBoard({ industry, region, district, search, viewerKey, onClearSearch, onLoginRequired, showToast }: {
+function VendorTextBoard({ industry, region, district, search, page, selectedPostId, viewerKey, onPageChange, onSelectedPostChange, onClearSearch, onLoginRequired, showToast }: {
   industry: string;
   region: string;
   district: string;
   search: string;
+  page: number;
+  selectedPostId: number | null;
   viewerKey: string;
+  onPageChange: (page: number, replace?: boolean) => void;
+  onSelectedPostChange: (postId: number | null, replace?: boolean) => void;
   onClearSearch: () => void;
   onLoginRequired: () => void;
   showToast: (message: string) => void;
@@ -1461,32 +1610,81 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
   const [writeBody, setWriteBody] = useState("");
   const [editorBusy, setEditorBusy] = useState(false);
   const requestRef = useRef(0);
+  const pagePostsRef = useRef(new Map<number, VendorTextPost[]>());
+  const pageCursorRef = useRef(new Map<number, number | null>([[0, null]]));
+  const loadedViewerKeyRef = useRef(viewerKey);
 
-  const load = useCallback(async (cursor: number | null = null) => {
+  const load = useCallback(async (targetPage = 1, force = false) => {
     const requestId = ++requestRef.current;
-    if (cursor) setLoadingMore(true);
+    if (force) {
+      pagePostsRef.current.clear();
+      pageCursorRef.current = new Map([[0, null]]);
+    }
+    if (targetPage > 1) setLoadingMore(true);
     else { setLoading(true); setLoadingMore(false); }
     try {
-      const params = new URLSearchParams({ industry, region, district });
-      if (search.trim()) params.set("q", search.trim());
-      if (cursor) params.set("cursor", String(cursor));
-      const response = await fetch(`/api/vendor-posts?${params}`, { cache: "no-store" });
-      const result = await response.json() as { posts?: VendorTextPost[]; nextCursor?: number | null; canWrite?: boolean; assignedRegions?: VendorAssignment[]; jumpSummary?: VendorJumpSummary | null; error?: string };
-      if (!response.ok) throw new Error(result.error ?? "업체정보 글을 불러오지 못했습니다.");
+      let resolvedPage = 0;
+      let latestResult: { posts?: VendorTextPost[]; nextCursor?: number | null; canWrite?: boolean; assignedRegions?: VendorAssignment[]; jumpSummary?: VendorJumpSummary | null; error?: string } | null = null;
+      for (let pageNumber = 1; pageNumber <= targetPage; pageNumber += 1) {
+        if (requestRef.current !== requestId) return;
+        if (!pagePostsRef.current.has(pageNumber)) {
+          const cursor = pageCursorRef.current.get(pageNumber - 1) ?? null;
+          if (pageNumber > 1 && !cursor) break;
+          const params = new URLSearchParams({ industry, region, district });
+          if (search.trim()) params.set("q", search.trim());
+          if (cursor) params.set("cursor", String(cursor));
+          const response = await fetch(`/api/vendor-posts?${params}`, { cache: "no-store" });
+          const result = await response.json() as { posts?: VendorTextPost[]; nextCursor?: number | null; canWrite?: boolean; assignedRegions?: VendorAssignment[]; jumpSummary?: VendorJumpSummary | null; error?: string };
+          if (!response.ok) throw new Error(result.error ?? "업체정보 글을 불러오지 못했습니다.");
+          pagePostsRef.current.set(pageNumber, result.posts ?? []);
+          pageCursorRef.current.set(pageNumber, result.nextCursor ?? null);
+          latestResult = result;
+        }
+        resolvedPage = pageNumber;
+      }
       if (requestRef.current !== requestId) return;
-      setPosts((current) => cursor ? [...current, ...(result.posts ?? [])] : result.posts ?? []);
-      setNextCursor(result.nextCursor ?? null);
-      setCanWrite(Boolean(result.canWrite));
-      setAssignments(result.assignedRegions ?? []);
-      setJumpSummary(result.jumpSummary ?? null);
+      const visiblePosts = Array.from({ length: resolvedPage }, (_, index) => pagePostsRef.current.get(index + 1) ?? []).flat();
+      setPosts(visiblePosts);
+      setNextCursor(pageCursorRef.current.get(resolvedPage) ?? null);
+      if (latestResult) {
+        setCanWrite(Boolean(latestResult.canWrite));
+        setAssignments(latestResult.assignedRegions ?? []);
+        setJumpSummary(latestResult.jumpSummary ?? null);
+      }
+      if (resolvedPage > 0 && resolvedPage !== targetPage) onPageChange(resolvedPage, true);
     } catch (error) { if (requestRef.current === requestId) showToast(error instanceof Error ? error.message : "업체정보 글을 불러오지 못했습니다."); }
-    finally { if (requestRef.current === requestId) { if (cursor) setLoadingMore(false); else setLoading(false); } }
-  }, [district, industry, region, search, showToast]);
+    finally { if (requestRef.current === requestId) { setLoadingMore(false); setLoading(false); } }
+  }, [district, industry, onPageChange, region, search, showToast]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
+    const viewerChanged = loadedViewerKeyRef.current !== viewerKey;
+    loadedViewerKeyRef.current = viewerKey;
+    const timer = window.setTimeout(() => void load(page, viewerChanged), 0);
     return () => window.clearTimeout(timer);
-  }, [load, viewerKey]);
+  }, [load, page, viewerKey]);
+
+  useEffect(() => {
+    if (!selectedPostId) {
+      const timer = window.setTimeout(() => {
+        setSelected(null);
+        setEditing(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+    const controller = new AbortController();
+    fetch(`/api/vendor-posts/${selectedPostId}`, { cache: "no-store", signal: controller.signal }).then(async (response) => {
+      const result = await response.json() as { post?: VendorTextPost; error?: string };
+      if (!response.ok || !result.post) throw new Error(result.error ?? "업체정보 글을 불러오지 못했습니다.");
+      setSelected(result.post);
+      setWriting(false);
+      setEditing(false);
+    }).catch((error) => {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      onSelectedPostChange(null, true);
+      showToast(error instanceof Error ? error.message : "업체정보 글을 불러오지 못했습니다.");
+    });
+    return () => controller.abort();
+  }, [onSelectedPostChange, selectedPostId, showToast, viewerKey]);
 
   const closeEditor = () => {
     if (editorBusy) return;
@@ -1498,13 +1696,11 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
     setSelected(null); setEditing(false); setWriting(true);
     setWriteIndustry(industry === "전체" ? "" : industry); setWriteArea(""); setWriteTitle(""); setWriteTitleColor(""); setWriteBody("");
   };
-  const openPost = async (post: VendorTextPost) => {
-    try {
-      const response = await fetch(`/api/vendor-posts/${post.id}`, { cache: "no-store" });
-      const result = await response.json() as { post?: VendorTextPost; error?: string };
-      if (!response.ok || !result.post) throw new Error(result.error ?? "업체정보 글을 불러오지 못했습니다.");
-      setSelected(result.post); setWriting(false); setEditing(false);
-    } catch (error) { showToast(error instanceof Error ? error.message : "업체정보 글을 불러오지 못했습니다."); }
+  const openPost = (post: VendorTextPost) => {
+    setSelected(post);
+    setWriting(false);
+    setEditing(false);
+    onSelectedPostChange(post.id);
   };
   const beginEdit = () => {
     if (!selected?.canEdit) return;
@@ -1520,7 +1716,12 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
       const response = await fetch(endpoint, { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ industry: writeIndustry, region: nextRegion, district: nextDistrict, title: writeTitle, titleColor: writeTitleColor, body: writeBody }) });
       const result = await response.json() as { post?: VendorTextPost; error?: string };
       if (!response.ok || !result.post) throw new Error(result.error ?? "업체정보 글을 저장하지 못했습니다.");
-      setSelected(result.post); setEditing(false); setWriting(false); showToast(editing ? "업체정보 글을 수정했습니다." : "업체정보 글을 등록했습니다."); await load();
+      setSelected(result.post);
+      setEditing(false);
+      setWriting(false);
+      onSelectedPostChange(result.post.id);
+      showToast(editing ? "업체정보 글을 수정했습니다." : "업체정보 글을 등록했습니다.");
+      await load(page, true);
     } catch (error) { showToast(error instanceof Error ? error.message : "업체정보 글을 저장하지 못했습니다."); }
     finally { setSubmitting(false); }
   };
@@ -1531,7 +1732,10 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
       const response = await fetch(`/api/vendor-posts/${selected.id}`, { method: "DELETE" });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error ?? "업체정보 글을 삭제하지 못했습니다.");
-      setSelected(null); showToast("업체정보 글을 삭제했습니다."); await load();
+      setSelected(null);
+      onSelectedPostChange(null, true);
+      showToast("업체정보 글을 삭제했습니다.");
+      await load(page, true);
     } catch (error) { showToast(error instanceof Error ? error.message : "업체정보 글을 삭제하지 못했습니다."); }
     finally { setSubmitting(false); }
   };
@@ -1547,7 +1751,7 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
       if (!response.ok || !result.jumpSummary) throw new Error(result.error ?? "상단점프를 처리하지 못했습니다.");
       setJumpSummary(result.jumpSummary);
       showToast(`상단점프 완료 · ${result.jumpSummary.remaining}회 남았습니다.`);
-      await load();
+      await load(page, true);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "상단점프를 처리하지 못했습니다.");
     } finally {
@@ -1573,10 +1777,10 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
   </section>;
 
   if (selected) return <section className="vendor-text-board vendor-detail">
-    <div className="vendor-board-title"><div><p>VENDOR BOARD</p><h2><PostTitleText title={selected.title} titleColor={selected.titleColor} /></h2></div><button type="button" onClick={() => setSelected(null)}>목록</button></div>
+    <div className="vendor-board-title"><div><p>VENDOR BOARD</p><h2><PostTitleText title={selected.title} titleColor={selected.titleColor} /></h2></div><button type="button" onClick={() => onSelectedPostChange(null)}>목록</button></div>
     <div className="vendor-detail-meta"><span>{selected.industry}</span><span>{selected.region}</span><span>{selected.district}</span><small>Lv.{selected.authorLevel} {selected.author} · {formatPostTime(selected.updatedAt)}</small></div>
     <div className="rich-post-body" dangerouslySetInnerHTML={{ __html: renderRichBody(selected.body) }} />
-    <div className="vendor-detail-actions">{selected.canEdit && <button type="button" onClick={beginEdit}>수정</button>}{selected.canDelete && <button type="button" className="danger" disabled={submitting} onClick={() => void remove()}>삭제</button>}<button type="button" onClick={() => setSelected(null)}>목록</button></div>
+    <div className="vendor-detail-actions">{selected.canEdit && <button type="button" onClick={beginEdit}>수정</button>}{selected.canDelete && <button type="button" className="danger" disabled={submitting} onClick={() => void remove()}>삭제</button>}<button type="button" onClick={() => onSelectedPostChange(null)}>목록</button></div>
   </section>;
 
   return <section className="vendor-text-board">
@@ -1595,7 +1799,7 @@ function VendorTextBoard({ industry, region, district, search, viewerKey, onClea
       <div className="vendor-board-head" role="row"><span role="columnheader">업종</span><span role="columnheader">지역</span><span role="columnheader">상세</span><b role="columnheader">제목</b></div>
       <div className="vendor-board-list">{loading ? <p className="vendor-board-empty">불러오는 중…</p> : posts.length ? posts.map((post) => <button type="button" className="vendor-board-row" aria-label={`${post.industry} ${post.region} ${post.district} ${stripRichTitle(post.title)} 업체정보 보기`} key={post.id} onClick={() => void openPost(post)}><span>{post.industry}</span><span>{post.region}</span><span>{post.district}</span><span className="vendor-board-subject"><PostTitleText title={post.title} titleColor={post.titleColor} /></span></button>) : <p className="vendor-board-empty">{search ? "검색 조건에 맞는 업체정보 글이 없습니다." : "조건에 맞는 업체정보 글이 없습니다."}</p>}</div>
     </div>
-    {nextCursor && <button className="vendor-board-more" type="button" disabled={loadingMore} onClick={() => void load(nextCursor)}>{loadingMore ? "불러오는 중…" : "이전 업체정보 더보기"}</button>}
+    {nextCursor && <button className="vendor-board-more" type="button" disabled={loadingMore} onClick={() => onPageChange(page + 1)}>{loadingMore ? "불러오는 중…" : `이전 업체정보 더보기 · ${page + 1}페이지`}</button>}
   </section>;
 }
 
@@ -1635,10 +1839,13 @@ const formatPointDate = (value: string) => new Intl.DateTimeFormat("ko-KR", {
 type BoardPageProps = {
   kind: BoardKind;
   livePosts: LivePost[];
+  loaded: boolean;
   viewer: Viewer | null;
   writing: boolean;
   selectedPost: BoardDisplayPost | null;
   submitting: boolean;
+  page: number;
+  onPageChange: (page: number, replace?: boolean) => void;
   onWrite: () => void;
   onCancelWrite: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -1746,17 +1953,16 @@ function EventRankTable({ title, description, activityLabel, rows, loading, unit
   </article>;
 }
 
-function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting, onWrite, onCancelWrite, onSubmit, onOpen, onLoginRequired, onPostChange, onPostRemoved, onPointReward, showToast, hideHeading = false }: BoardPageProps) {
+function BoardPage({ kind, livePosts, loaded, viewer, writing, selectedPost, submitting, page, onPageChange, onWrite, onCancelWrite, onSubmit, onOpen, onLoginRequired, onPostChange, onPostRemoved, onPointReward, showToast, hideHeading = false }: BoardPageProps) {
   const [filter, setFilter] = useState<"all" | "popular" | "notice">("all");
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [popularNow, setPopularNow] = useState(0);
   const [popularLivePosts, setPopularLivePosts] = useState<LivePost[] | null>(null);
   const [popularLoading, setPopularLoading] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
   const popularRequestRef = useRef(0);
   const changeFilter = (nextFilter: "all" | "popular" | "notice") => {
-    setCurrentPage(1);
+    onPageChange(1);
     if (nextFilter === "popular") {
       setPopularNow(Date.now());
       const requestId = ++popularRequestRef.current;
@@ -1786,7 +1992,10 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
   const searchedPosts = sourcePosts.filter((post) => !searchTerm || `${post.communityTags.join(" ")} ${stripRichTitle(post.title)} ${post.author}`.toLowerCase().includes(searchTerm.toLowerCase()));
   const filteredPosts = searchedPosts.filter((post) => filter !== "notice" || post.isNotice);
   const totalPages = Math.max(1, Math.ceil(filteredPosts.length / BOARD_PAGE_SIZE));
-  const activePage = Math.min(currentPage, totalPages);
+  const activePage = Math.min(page, totalPages);
+  useEffect(() => {
+    if (loaded && page > totalPages) onPageChange(totalPages, true);
+  }, [loaded, onPageChange, page, totalPages]);
   const visiblePages = visiblePageNumbers(activePage, totalPages);
   const pageStart = (activePage - 1) * BOARD_PAGE_SIZE;
   const pagePosts = filteredPosts.slice(pageStart, pageStart + BOARD_PAGE_SIZE);
@@ -1827,13 +2036,13 @@ function BoardPage({ kind, livePosts, viewer, writing, selectedPost, submitting,
       <BoardList kind={kind} posts={pagePosts} totalPosts={filteredPosts.length} pageStart={pageStart} filter={filter} loading={filter === "popular" && popularLoading} onFilter={changeFilter} onWrite={onWrite} onOpen={onOpen} />
       <div className="forum-bottom">
         <div className="forum-pagination" aria-label={`${boardLabels[kind]} 페이지 이동`}>
-          <button type="button" aria-label="이전 페이지" disabled={activePage === 1} onClick={() => setCurrentPage(Math.max(1, activePage - 1))}>‹</button>
-          {visiblePages.map((page) => <button type="button" className={page === activePage ? "active" : ""} aria-current={page === activePage ? "page" : undefined} onClick={() => setCurrentPage(page)} key={page}>{page}</button>)}
-          <button type="button" aria-label="다음 페이지" disabled={activePage === totalPages} onClick={() => setCurrentPage(Math.min(totalPages, activePage + 1))}>›</button>
+          <button type="button" aria-label="이전 페이지" disabled={activePage === 1} onClick={() => onPageChange(Math.max(1, activePage - 1))}>‹</button>
+          {visiblePages.map((pageNumber) => <button type="button" className={pageNumber === activePage ? "active" : ""} aria-current={pageNumber === activePage ? "page" : undefined} onClick={() => onPageChange(pageNumber)} key={pageNumber}>{pageNumber}</button>)}
+          <button type="button" aria-label="다음 페이지" disabled={activePage === totalPages} onClick={() => onPageChange(Math.min(totalPages, activePage + 1))}>›</button>
         </div>
         {kind !== "events" && kind !== "notices" && <button type="button" className="forum-write-button" onClick={onWrite}>글쓰기</button>}
       </div>
-      <form className="forum-search" onSubmit={(event) => { event.preventDefault(); setCurrentPage(1); setSearchTerm(searchInput.trim()); }}>
+      <form className="forum-search" onSubmit={(event) => { event.preventDefault(); onPageChange(1); setSearchTerm(searchInput.trim()); }}>
         <select aria-label="검색 범위" defaultValue="title"><option value="title">제목</option><option value="titleAuthor">제목+작성자</option></select>
         <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} aria-label="게시판 검색어" />
         <button type="submit">검색</button>
@@ -2075,7 +2284,7 @@ function BoardDetail({ kind, post: initialPost, viewer, onLoginRequired, onPostC
     <PostRichBody body={post.body} poll={poll} viewer={viewer} postId={typeof post.id === "number" ? post.id : null} onLoginRequired={onLoginRequired} showToast={showToast} />
     <div className="forum-detail-actions">
       <div className="forum-vote-actions"><button type="button" disabled={actionSubmitting || post.isOwn || post.author === viewer?.nickname} onClick={() => void vote("up")} title={post.isOwn || post.author === viewer?.nickname ? "본인 글에는 투표할 수 없습니다." : undefined}><strong>추천</strong><span>{post.likes}</span></button><button type="button" disabled={actionSubmitting || post.isOwn || post.author === viewer?.nickname} onClick={() => void vote("down")} title={post.isOwn || post.author === viewer?.nickname ? "본인 글에는 투표할 수 없습니다." : undefined}><strong>비추천</strong><span>{post.dislikes}</span></button></div>
-      <div className="forum-secondary-actions"><button type="button" onClick={() => { const url = post.live ? `${window.location.origin}${window.location.pathname}?board=${kind}&post=${post.id}` : window.location.href; void navigator.clipboard?.writeText(url).then(() => showToast("게시글 주소를 복사했습니다.")).catch(() => showToast("주소를 복사하지 못했습니다.")); }}>공유</button><button type="button" disabled={actionSubmitting} onClick={() => setReportOpen((current) => !current)}>신고</button>{post.canEdit && <button type="button" className="post-edit-button" disabled={actionSubmitting} onClick={() => setEditing(true)}>수정</button>}{post.canDelete && <button type="button" className="admin-delete-button" disabled={actionSubmitting} onClick={() => void deletePost()}>삭제</button>}</div>
+      <div className="forum-secondary-actions"><button type="button" onClick={() => { void navigator.clipboard?.writeText(window.location.href).then(() => showToast("게시글 주소를 복사했습니다.")).catch(() => showToast("주소를 복사하지 못했습니다.")); }}>공유</button><button type="button" disabled={actionSubmitting} onClick={() => setReportOpen((current) => !current)}>신고</button>{post.canEdit && <button type="button" className="post-edit-button" disabled={actionSubmitting} onClick={() => setEditing(true)}>수정</button>}{post.canDelete && <button type="button" className="admin-delete-button" disabled={actionSubmitting} onClick={() => void deletePost()}>삭제</button>}</div>
     </div>
     {reportOpen && <div className="report-reasons" role="group" aria-label="신고 사유 선택"><b>신고 사유를 선택해 주세요.</b><div><button type="button" disabled={actionSubmitting} onClick={() => void report("무단 홍보")}>무단 홍보</button><button type="button" disabled={actionSubmitting} onClick={() => void report("사기")}>사기</button><button type="button" disabled={actionSubmitting} onClick={() => void report("도배")}>도배</button><button type="button" onClick={() => setReportOpen(false)}>취소</button></div><p>회원 한 명당 게시글 하나에 한 번만 신고할 수 있습니다.</p></div>}
     <section className="forum-comments">
