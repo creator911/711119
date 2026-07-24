@@ -22,6 +22,25 @@ test("nginx blocks direct origin traffic and only trusts Cloudflare at the app v
   assert.match(nginx, /proxy_set_header X-Real-IP \$http_cf_connecting_ip;/);
 });
 
+test("split services trust one normalized reverse-proxy protocol header", () => {
+  const publicEnv = read("deploy/public.env.example");
+  const adminEnv = read("deploy/admin.env.example");
+  const nginx = read("deploy/nginx-split.conf.template");
+  assert.match(publicEnv, /^VINEXT_TRUST_PROXY=1$/m);
+  assert.match(adminEnv, /^VINEXT_TRUST_PROXY=1$/m);
+  assert.doesNotMatch(
+    nginx,
+    /include \/etc\/nginx\/proxy_params;[\s\S]{0,180}?proxy_set_header X-Forwarded-Proto/,
+    "proxy_params already supplies X-Forwarded-Proto; a duplicate becomes a comma-separated value",
+  );
+});
+
+test("the isolated worker does not depend on a public service unit on the admin host", () => {
+  const worker = read("deploy/nara001-worker.service");
+  assert.match(worker, /^After=network-online\.target valkey\.service$/m);
+  assert.doesNotMatch(worker, /nara001-public\.service/);
+});
+
 test("fresh server install bootstraps TLS before installing the SSL vhost", () => {
   const install = read("deploy/install-server.sh");
   const bootstrap = read("deploy/nginx-bootstrap.conf");

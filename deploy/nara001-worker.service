@@ -1,6 +1,6 @@
 [Unit]
 Description=Nara001 background worker
-After=network-online.target nara001-public.service
+After=network-online.target valkey.service
 Wants=network-online.target
 
 [Service]
